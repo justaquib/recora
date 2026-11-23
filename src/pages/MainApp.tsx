@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, useParams } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { emitTo, listen } from "@tauri-apps/api/event";
@@ -13,7 +13,7 @@ import RecordingPage from "./RecordingPage";
 import SettingsPage from "./SettingsPage";
 import { recordingEvents } from "../features/recording/recordingEvents";
 import { copyRecordingFile, readRecordingBlob, readVideos, removeVideo, writeSetting, putVideo, readSetting } from "../services/recordingStorage";
-import type { VideoItem } from "../shared/types";
+import type { RecordingPreferences, VideoItem } from "../shared/types";
 import { useLibraryStore } from "../stores/useLibraryStore";
 
 /** Library and preferences only. Capture runs in the dedicated recorder webview. */
@@ -21,6 +21,7 @@ function MainShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const store = useLibraryStore();
+  const [recordingPreferences, setRecordingPreferences] = useState<RecordingPreferences>({ captureMode: "screen", cameraEnabled: true, micEnabled: true, countdownDuration: 5 });
   const { videos, setVideos, query, setQuery, sortOrder, setSortOrder, view, setView, saveDirectory, setSaveDirectory, error, setError, notice, setNotice, renaming, setRenaming, draftTitle, setDraftTitle, confirmDelete, setConfirmDelete } = store;
 
   const searchInput = useRef<HTMLInputElement>(null);
@@ -35,8 +36,10 @@ function MainShell() {
     void refresh();
     void writeSetting("isRecording", false).catch(() => undefined);
     void readSetting<string>("saveDirectory").then((value) => setSaveDirectory(value || "")).catch(() => undefined);
+    void readSetting<RecordingPreferences>("recordingPreferences").then((value) => { if (value) setRecordingPreferences((current) => ({ ...current, ...value })); }).catch(() => undefined);
     let unlistenLibrary: (() => void) | undefined;
     let unlistenFocus: (() => void) | undefined;
+    let unlistenPreferences: (() => void) | undefined;
     const closeFloatingWindows = async () => {
       const inactive = { active: false, ready: false, recording: false, preparing: false, paused: false, elapsed: 0, camera: false, bubble: false, saving: false };
       await Promise.all(["camera-bubble", "recording-controls", "annotation-overlay"].map((label) => emitTo(label, "recodex:widget-status", inactive).catch(() => undefined)));
@@ -51,7 +54,9 @@ function MainShell() {
       .then((stop) => { unlistenFocus = stop; }).catch((cause) => console.warn("Could not listen for dashboard focus", cause));
     void listen<{ id: string }>(recordingEvents.libraryChanged, () => { void refresh(); })
       .then((stop) => { unlistenLibrary = stop; }).catch((cause) => console.warn("Could not listen for library updates", cause));
-    return () => { unlistenLibrary?.(); unlistenFocus?.(); };
+    void listen<RecordingPreferences>(recordingEvents.recordingPreferences, (event) => setRecordingPreferences((current) => ({ ...current, ...event.payload })))
+      .then((stop) => { unlistenPreferences = stop; }).catch((cause) => console.warn("Could not listen for recording preferences", cause));
+    return () => { unlistenLibrary?.(); unlistenFocus?.(); unlistenPreferences?.(); };
   }, [refresh, setSaveDirectory]);
 
   useEffect(() => {
@@ -112,6 +117,12 @@ function MainShell() {
     setNotice("Recordings will save to Documents/Recodex");
   };
 
+  const updateRecordingPreferences = async (preferences: RecordingPreferences) => {
+    setRecordingPreferences(preferences);
+    await writeSetting("recordingPreferences", preferences);
+    await emitTo("recording-setup", recordingEvents.recordingPreferences, preferences).catch(() => undefined);
+  };
+
   const updateTitle = async () => {
     if (!selected) return;
     const title = draftTitle.trim();
@@ -147,18 +158,22 @@ function MainShell() {
   };
 
   const isRecordingPage = location.pathname === "/recording";
-  const headerTitle = isDetail ? "Recording" : isRecordingPage ? "Recording" : "My recordings";
+  const pageTitles: Record<string, string> = { "/account": "Account", "/settings": "Settings", "/preferences": "Preferences", "/help": "Help" };
+  const headerTitle = pageTitles[location.pathname] || (isDetail ? "Recording" : isRecordingPage ? "Recording" : "My recordings");
 
   return (
     <div className="app-shell">
-      <Sidebar videoCount={videos.length} saveDirectory={saveDirectory} onNewRecording={() => void openRecorder()} onChooseSaveDirectory={() => void chooseSaveDirectory()} onResetSaveDirectory={() => void resetSaveDirectory()} />
+      <Sidebar videoCount={videos.length} onNewRecording={() => void openRecorder()} />
       <main className="main-area">
-        <header className="topbar"><div className="breadcrumbs"><span>Workspace</span><span className="crumb-slash">/</span><strong>{headerTitle}</strong></div><div className="top-actions"><span className="local-pill"><span /> Saved locally</span><button className="icon-button" aria-label="Settings" title="Settings" onClick={() => document.querySelector(".save-location-card")?.scrollIntoView({ behavior: "smooth", block: "nearest" })}><Icon name="settings" /></button><button className="avatar small" aria-label="Personal workspace">A</button></div></header>
+        <header className="topbar"><div className="breadcrumbs"><span>Workspace</span><span className="crumb-slash">/</span><strong>{location.pathname === "/settings" ? "Settings" : headerTitle}</strong></div><div className="top-actions"><span className="local-pill"><span /> Saved locally</span><button className="icon-button" aria-label="Settings" title="Settings" onClick={() => navigate("/settings")}><Icon name="settings" /></button><button className="avatar small" aria-label="Personal workspace">A</button></div></header>
         <Routes>
           <Route path="/" element={<LibraryPage videos={videos} filtered={filtered.slice(0, 3)} query={query} showToolbar={false} onQueryChange={setQuery} searchInput={searchInput} sortOrder={sortOrder} onSortChange={setSortOrder} view={view} onViewChange={setView} onNewRecording={() => void openRecorder()} onOpenVideo={(video) => navigate(`/recordings/${video.id}`)} />} />
           <Route path="/recording" element={<RecordingPage videos={videos} filtered={filtered} query={query} onQueryChange={setQuery} searchInput={searchInput} sortOrder={sortOrder} onSortChange={setSortOrder} view={view} onViewChange={setView} onOpenVideo={(video) => navigate(`/recordings/${video.id}`)} />} />
           <Route path="/recordings/:id" element={<RecordingDetailRoute videos={videos} previewVideo={previewVideo} renaming={renaming} draftTitle={draftTitle} onDraftTitleChange={setDraftTitle} onStartRename={() => { if (selected) { setDraftTitle(selected.title); setRenaming(true); } }} onCancelRename={() => setRenaming(false)} onUpdateTitle={() => void updateTitle()} onExport={() => void exportSelected()} onDelete={() => setConfirmDelete(true)} onBack={() => navigate("/")} />} />
-          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/account" element={<SettingsPage saveDirectory={saveDirectory} recordingPreferences={recordingPreferences} onChooseSaveDirectory={() => void chooseSaveDirectory()} onResetSaveDirectory={() => void resetSaveDirectory()} onRecordingPreferencesChange={(preferences) => void updateRecordingPreferences(preferences)} />} />
+          <Route path="/settings" element={<SettingsPage saveDirectory={saveDirectory} recordingPreferences={recordingPreferences} onChooseSaveDirectory={() => void chooseSaveDirectory()} onResetSaveDirectory={() => void resetSaveDirectory()} onRecordingPreferencesChange={(preferences) => void updateRecordingPreferences(preferences)} />} />
+          <Route path="/preferences" element={<SettingsPage saveDirectory={saveDirectory} recordingPreferences={recordingPreferences} onChooseSaveDirectory={() => void chooseSaveDirectory()} onResetSaveDirectory={() => void resetSaveDirectory()} onRecordingPreferencesChange={(preferences) => void updateRecordingPreferences(preferences)} />} />
+          <Route path="/help" element={<SettingsPage saveDirectory={saveDirectory} recordingPreferences={recordingPreferences} onChooseSaveDirectory={() => void chooseSaveDirectory()} onResetSaveDirectory={() => void resetSaveDirectory()} onRecordingPreferencesChange={(preferences) => void updateRecordingPreferences(preferences)} />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

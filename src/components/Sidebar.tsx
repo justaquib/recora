@@ -1,17 +1,14 @@
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Icon } from "./Icon";
-import { User, Settings as SettingsIcon, SlidersHorizontal, HelpCircle, LogOut } from "lucide-react";
+import { UserRound, Settings, SlidersHorizontal, CircleHelp } from "lucide-react";
 
 type Props = {
   videoCount: number;
-  saveDirectory: string;
   onNewRecording: () => void;
-  onChooseSaveDirectory: () => void;
-  onResetSaveDirectory: () => void;
 };
 
-export default function Sidebar({ videoCount, saveDirectory, onNewRecording, onChooseSaveDirectory, onResetSaveDirectory }: Props) {
+export default function Sidebar({ videoCount, onNewRecording }: Props) {
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
@@ -25,23 +22,18 @@ export default function Sidebar({ videoCount, saveDirectory, onNewRecording, onC
       <button className={`nav-item ${onRecordings ? "active" : ""}`} onClick={() => navigate("/")}><Icon name="home" /> <span>Home</span></button>
       <button className={`nav-item ${onRecording ? "active" : ""}`} onClick={() => navigate("/recording")}><Icon name="monitor" /><span>Recording</span><span className="nav-count">{videoCount}</span></button>
       <div className="sidebar-bottom">
-        <section className="storage-card save-location-card"><div className="storage-top"><Icon name="folder" size={14} /><span>Save location</span></div><div className="save-location-path" title={saveDirectory || "~/Documents/Recodex"}>{saveDirectory ? saveDirectory.split(/[\\/]/).filter(Boolean).slice(-2).join("/") : "Documents/Recodex"}</div><div className="save-location-actions"><button onClick={() => void onChooseSaveDirectory()}>Change</button>{saveDirectory && <button onClick={() => void onResetSaveDirectory()}>Default</button>}</div></section>
         <div className="storage-card"><div className="storage-top"><span className="storage-dot" /><span>Stored on this device</span></div><div className="storage-note">Your recordings stay private and local.</div></div>
-        <div style={{ position: "relative" }}>
-          <button className="profile" onClick={() => setMenuOpen((value) => !value)}><span className="avatar">A</span><span className="profile-copy"><strong>Personal workspace</strong><small>Local library</small></span><Icon name="more" size={17} /></button>
-          {menuOpen && <div style={{ position: "absolute", bottom: "100%", left: 0, right: 0, background: "#F2F2F2", border: "1px solid rgba(26,26,26,.13)", borderRadius: 8, padding: 6, marginBottom: 6, zIndex: 20, display: "flex", flexDirection: "column", gap: 2 }}>
-            {[
-              { label: "Account", icon: <User size={16} /> },
-              { label: "Settings", icon: <SettingsIcon size={16} /> },
-              { label: "Preference", icon: <SlidersHorizontal size={16} /> },
-              { label: "Help", icon: <HelpCircle size={16} /> },
-              { label: "Logout", icon: <LogOut size={16} /> },
-            ].map((item) => (
-              <button key={item.label} className="nav-item" style={{ height: 32, display: "flex", alignItems: "center", gap: 8 }} onClick={() => { setMenuOpen(false); if (item.label === "Settings") navigate("/settings"); }}>
-                {item.icon} {item.label}
-              </button>
-            ))}
-          </div>}
+        <div className="profile-menu-anchor">
+          {menuOpen && <div className="profile-menu" role="menu" aria-label="Workspace menu">{[
+            { label: "Account", path: "/account", icon: <UserRound size={15} /> },
+            { label: "Settings", path: "/settings", icon: <Settings size={15} /> },
+            { label: "Preferences", path: "/preferences", icon: <SlidersHorizontal size={15} /> },
+            { label: "Help", path: "/help", icon: <CircleHelp size={15} /> },
+          ].map((item) => <button key={item.path} role="menuitem" className={location.pathname === item.path ? "selected" : ""} onClick={() => { setMenuOpen(false); navigate(item.path); }}>{item.icon}<span>{item.label}</span></button>)}</div>}
+          <div className="profile">
+            <button className="profile-main" onClick={() => navigate("/account")}><span className="avatar">A</span><span className="profile-copy"><strong>Personal workspace</strong><small>Local library</small></span></button>
+            <button className="profile-menu-trigger" aria-label="Open workspace menu" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((value) => !value)}><Icon name="more" size={17} /></button>
+          </div>
         </div>
       </div>
     </aside>

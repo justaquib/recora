@@ -9,7 +9,7 @@ import RecordingIssueModal from "../../components/RecordingIssueModal";
 import RecorderSetupModal from "../../components/RecorderSetupModal";
 import { friendlyError, formatFileSize, formatTime } from "../../utils/format";
 import { recordingEvents } from "./recordingEvents";
-import type { AnnotationTool, CaptureMode, Source, VideoItem, WidgetStatus } from "../../shared/types";
+import type { AnnotationTool, CaptureMode, RecordingPreferences, Source, VideoItem, WidgetStatus } from "../../shared/types";
 import { appendBlobToTemporaryFile, copyRecordingFile, createTemporaryRecordingFile, finalizeTemporaryRecordingFile, putVideo, readBlobDuration, readRecordingBlob, readRecordingFileSize, readSetting, writeSetting } from "../../services/recordingStorage";
 
 export default function RecordingSetupWindow() {
@@ -58,6 +58,10 @@ export default function RecordingSetupWindow() {
   const annotationSnapshotKey = useRef<string | null>(null);
   const countdownTimer = useRef<number | null>(null);
   const countdownFinish = useRef<(() => void) | null>(null);
+  const persistRecordingPreferences = async (preferences: RecordingPreferences) => {
+    await writeSetting("recordingPreferences", preferences).catch((cause) => console.warn("Could not save recording preferences", cause));
+    await emitTo("main", recordingEvents.recordingPreferences, preferences).catch(() => undefined);
+  };
 
   const currentWindow = getCurrentWindow();
   const skipCountdown = () => {
@@ -122,11 +126,27 @@ export default function RecordingSetupWindow() {
   };
   useEffect(() => {
     void readSetting<string>("saveDirectory").then((value) => { saveDirectory.current = value || null; }).catch((cause) => console.warn("Could not load save location", cause));
+    void readSetting<RecordingPreferences>("recordingPreferences").then((value) => {
+      if (!value) return;
+      setCaptureMode(value.captureMode);
+      setCameraEnabled(value.cameraEnabled);
+      setMicEnabled(value.micEnabled);
+      setCountdownDuration(value.countdownDuration);
+    }).catch((cause) => console.warn("Could not load recording preferences", cause));
     void loadDevices();
     let unlistenSettings: (() => void) | undefined;
+    let unlistenPreferences: (() => void) | undefined;
     void listen<{ saveDirectory: string }>(recordingEvents.setupConfig, (event) => { saveDirectory.current = event.payload.saveDirectory || null; setShowRecorder(true); setError(""); })
       .then((stop) => { unlistenSettings = stop; }).catch((cause) => console.warn("Could not sync save location", cause));
-    return () => unlistenSettings?.();
+    void listen<RecordingPreferences>(recordingEvents.recordingPreferences, (event) => {
+      setCaptureMode(event.payload.captureMode);
+      setCameraEnabled(event.payload.cameraEnabled);
+      setMicEnabled(event.payload.micEnabled);
+      setCountdownDuration(event.payload.countdownDuration);
+      if (event.payload.micId !== undefined) setMicId(event.payload.micId);
+      if (event.payload.cameraId !== undefined) setCameraId(event.payload.cameraId);
+    }).then((stop) => { unlistenPreferences = stop; }).catch((cause) => console.warn("Could not sync recording preferences", cause));
+    return () => { unlistenSettings?.(); unlistenPreferences?.(); };
   }, []);
 
   useEffect(() => {
@@ -229,7 +249,11 @@ export default function RecordingSetupWindow() {
     const cams = devices.filter((device) => device.kind === "videoinput").map((device, index) => ({ deviceId: device.deviceId, label: device.label || `Camera ${index + 1}` }));
     setMicrophones(mics); setCameras(cams);
     if (cams.length === 0) setCameraEnabled(false);
-    setMicId((value) => value || mics[0]?.deviceId || ""); setCameraId((value) => value || cams[0]?.deviceId || "");
+    const saved = await readSetting<RecordingPreferences>("recordingPreferences").catch(() => undefined);
+    const selectedMic = saved?.micId && mics.some((device) => device.deviceId === saved.micId) ? saved.micId : mics[0]?.deviceId || "";
+    const selectedCamera = saved?.cameraId && cams.some((device) => device.deviceId === saved.cameraId) ? saved.cameraId : cams[0]?.deviceId || "";
+    setMicId(selectedMic); setCameraId(selectedCamera);
+    await persistRecordingPreferences({ ...saved, captureMode: saved?.captureMode ?? captureMode, cameraEnabled: cams.length > 0 && (saved?.cameraEnabled ?? cameraEnabled), micEnabled: saved?.micEnabled ?? micEnabled, countdownDuration: saved?.countdownDuration ?? countdownDuration, micId: selectedMic, cameraId: selectedCamera, microphones: mics, cameras: cams });
   };
 
   const cleanupCapture = () => {
@@ -663,19 +687,19 @@ export default function RecordingSetupWindow() {
       busy={busy}
       error={error}
       captureMode={captureMode}
-      onCaptureModeChange={setCaptureMode}
+      onCaptureModeChange={(mode) => { setCaptureMode(mode); void persistRecordingPreferences({ captureMode: mode, cameraEnabled, micEnabled, countdownDuration, micId, cameraId, microphones, cameras }); }}
       cameraEnabled={cameraEnabled}
-      onCameraEnabledChange={setCameraEnabled}
+      onCameraEnabledChange={(enabled) => { setCameraEnabled(enabled); void persistRecordingPreferences({ captureMode, cameraEnabled: enabled, micEnabled, countdownDuration, micId, cameraId, microphones, cameras }); }}
       micEnabled={micEnabled}
-      onMicEnabledChange={setMicEnabled}
+      onMicEnabledChange={(enabled) => { setMicEnabled(enabled); void persistRecordingPreferences({ captureMode, cameraEnabled, micEnabled: enabled, countdownDuration, micId, cameraId, microphones, cameras }); }}
       microphones={microphones}
       cameras={cameras}
       micId={micId}
-      onMicChange={setMicId}
+      onMicChange={(deviceId) => { setMicId(deviceId); void persistRecordingPreferences({ captureMode, cameraEnabled, micEnabled, countdownDuration, micId: deviceId, cameraId, microphones, cameras }); }}
       cameraId={cameraId}
-      onCameraChange={setCameraId}
+      onCameraChange={(deviceId) => { setCameraId(deviceId); void persistRecordingPreferences({ captureMode, cameraEnabled, micEnabled, countdownDuration, micId, cameraId: deviceId, microphones, cameras }); }}
       countdownDuration={countdownDuration}
-      onCountdownChange={setCountdownDuration}
+      onCountdownChange={(seconds) => { setCountdownDuration(seconds); void persistRecordingPreferences({ captureMode, cameraEnabled, micEnabled, countdownDuration: seconds, micId, cameraId, microphones, cameras }); }}
       onOpenPrivacySettings={() => {
         const section = /microphone|audio/i.test(error) ? "microphone" : /camera/i.test(error) ? "camera" : "screen";
         void invoke("open_capture_privacy_settings", { section }).catch((cause) => setError(cause instanceof Error ? cause.message : "Could not open macOS Privacy settings."));
