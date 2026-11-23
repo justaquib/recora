@@ -332,6 +332,212 @@ fn copy_recording_file(source_path: String, directory: Option<String>, suggested
     Ok(destination.to_string_lossy().into_owned())
 }
 
+fn ffmpeg_binary() -> &'static str {
+    for candidate in ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"] {
+        if std::path::Path::new(candidate).exists() {
+            return candidate;
+        }
+    }
+    "ffmpeg"
+}
+
+#[tauri::command]
+fn export_recording_file(source_path: String, directory: Option<String>, suggested_name: String, quality: String, thumbnail_bytes: Vec<u8>) -> Result<String, String> {
+    use std::{env, fs, process::Command, path::PathBuf};
+    let source = PathBuf::from(&source_path);
+    if !source.exists() {
+        return Err(format!("Could not locate the existing recording: {}", source.display()));
+    }
+    let destination_directory = match directory.filter(|path| !path.trim().is_empty()) {
+        Some(path) => PathBuf::from(path),
+        None => PathBuf::from(env::var_os("HOME").ok_or("Could not find the current user's home folder")?).join("Documents").join("Recodex"),
+    };
+    let stem = std::path::Path::new(&suggested_name)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("recodex-recording");
+    let destination = unique_recording_path(&destination_directory, &format!("{stem}.mp4"))?;
+    let (crf, preset, audio_bitrate) = match quality.as_str() {
+        "high" => ("18", "slow", "192k"),
+        "low" => ("28", "fast", "96k"),
+        _ => ("23", "medium", "128k"),
+    };
+    let thumbnail_path = if thumbnail_bytes.is_empty() {
+        None
+    } else {
+        let temp_dir = std::env::temp_dir().join("recodex-export-thumb");
+        fs::create_dir_all(&temp_dir).map_err(|error| format!("Could not create temporary folder: {error}"))?;
+        let path = temp_dir.join(format!("thumb-{}.jpg", std::process::id()));
+        fs::write(&path, &thumbnail_bytes).map_err(|error| format!("Could not write thumbnail: {error}"))?;
+        Some(path)
+    };
+    let output = if let Some(thumb) = &thumbnail_path {
+        Command::new(ffmpeg_binary())
+            .args([
+                "-y",
+                "-i",
+                source.to_str().ok_or("Recording path contains an invalid character")?,
+                "-i",
+                thumb.to_str().ok_or("Thumbnail path contains an invalid character")?,
+                "-map",
+                "0:v",
+                "-map",
+                "0:a?",
+                "-map",
+                "1",
+                "-c:v:0",
+                "libx264",
+                "-preset",
+                preset,
+                "-crf",
+                crf,
+                "-c:a",
+                "aac",
+                "-b:a",
+                audio_bitrate,
+                "-c:v:1",
+                "copy",
+                "-disposition:v:1",
+                "attached_pic",
+                "-movflags",
+                "+faststart",
+                destination.to_str().ok_or("Export path contains an invalid character")?,
+            ])
+            .output()
+            .map_err(|error| format!("Could not run ffmpeg for export: {error}"))?
+    } else {
+        Command::new(ffmpeg_binary())
+            .args([
+                "-y",
+                "-i",
+                source.to_str().ok_or("Recording path contains an invalid character")?,
+                "-c:v",
+                "libx264",
+                "-preset",
+                preset,
+                "-crf",
+                crf,
+                "-c:a",
+                "aac",
+                "-b:a",
+                audio_bitrate,
+                "-movflags",
+                "+faststart",
+                destination.to_str().ok_or("Export path contains an invalid character")?,
+            ])
+            .output()
+            .map_err(|error| format!("Could not run ffmpeg for export: {error}"))?
+    };
+    if let Some(thumb) = &thumbnail_path { let _ = fs::remove_file(thumb); }
+    if !output.status.success() {
+        let _ = fs::remove_file(&destination);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Could not export the recording: {}", stderr.trim()));
+    }
+    Ok(destination.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn estimate_export_size(source_path: String, quality: String) -> Result<u64, String> {
+    use std::{env, fs, process::Command, path::PathBuf};
+    let source = PathBuf::from(&source_path);
+    if !source.exists() {
+        return Err(format!("Could not locate the existing recording: {}", source.display()));
+    }
+    let temp_dir = env::temp_dir().join("recodex-export-estimate");
+    fs::create_dir_all(&temp_dir).map_err(|error| format!("Could not create temporary folder: {error}"))?;
+    let destination = temp_dir.join(format!("estimate-{}-{}.mp4", std::process::id(), quality));
+    let (crf, preset, audio_bitrate) = match quality.as_str() {
+        "high" => ("18", "slow", "192k"),
+        "low" => ("28", "fast", "96k"),
+        _ => ("23", "medium", "128k"),
+    };
+    let output = Command::new(ffmpeg_binary())
+        .args([
+            "-y",
+            "-i",
+            source.to_str().ok_or("Recording path contains an invalid character")?,
+            "-c:v",
+            "libx264",
+            "-preset",
+            preset,
+            "-crf",
+            crf,
+            "-c:a",
+            "aac",
+            "-b:a",
+            audio_bitrate,
+            "-movflags",
+            "+faststart",
+            destination.to_str().ok_or("Export path contains an invalid character")?,
+        ])
+        .output()
+        .map_err(|error| format!("Could not run ffmpeg for estimate: {error}"))?;
+    if !output.status.success() {
+        let _ = fs::remove_file(&destination);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Could not estimate export size: {}", stderr.trim()));
+    }
+    let size = fs::metadata(&destination).map(|metadata| metadata.len()).map_err(|error| format!("Could not inspect estimated file: {error}"))?;
+    let _ = fs::remove_file(&destination);
+    Ok(size)
+}
+
+#[tauri::command]
+fn embed_thumbnail_in_video(source_path: String, thumbnail_bytes: Vec<u8>, in_place: bool) -> Result<String, String> {
+    use std::{env, fs, process::Command, path::PathBuf};
+    let source = PathBuf::from(&source_path);
+    if !source.exists() {
+        return Err(format!("Could not locate the existing recording: {}", source.display()));
+    }
+    if thumbnail_bytes.is_empty() {
+        return Err("No thumbnail is available for this recording.".into());
+    }
+    let temp_dir = std::env::temp_dir().join("recodex-embed-thumb");
+    fs::create_dir_all(&temp_dir).map_err(|error| format!("Could not create temporary folder: {error}"))?;
+    let thumb_path = temp_dir.join(format!("thumb-{}.jpg", std::process::id()));
+    fs::write(&thumb_path, &thumbnail_bytes).map_err(|error| format!("Could not write thumbnail: {error}"))?;
+    let output_path = if in_place {
+        source.with_file_name(format!("{}-thumb.mp4", source.file_stem().and_then(|v| v.to_str()).unwrap_or("recodex-recording")))
+    } else {
+        let directory = source.parent().map(PathBuf::from).unwrap_or_else(|| PathBuf::from(env::var_os("HOME").unwrap_or_default()).join("Documents").join("Recodex"));
+        fs::create_dir_all(&directory).map_err(|error| format!("Could not create destination folder: {error}"))?;
+        directory.join(format!("{}-thumb.mp4", source.file_stem().and_then(|v| v.to_str()).unwrap_or("recodex-recording")))
+    };
+    let output = Command::new(ffmpeg_binary())
+        .args([
+            "-y",
+            "-i",
+            source.to_str().ok_or("Recording path contains an invalid character")?,
+            "-i",
+            thumb_path.to_str().ok_or("Thumbnail path contains an invalid character")?,
+            "-map",
+            "0",
+            "-map",
+            "1",
+            "-c",
+            "copy",
+            "-disposition:v:1",
+            "attached_pic",
+            output_path.to_str().ok_or("Output path contains an invalid character")?,
+        ])
+        .output()
+        .map_err(|error| format!("Could not run ffmpeg: {error}"))?;
+    let _ = fs::remove_file(&thumb_path);
+    if !output.status.success() {
+        let _ = fs::remove_file(&output_path);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Could not add thumbnail to video: {}", stderr.trim()));
+    }
+    if in_place {
+        fs::remove_file(&source).map_err(|error| format!("Could not remove original recording: {error}"))?;
+        fs::rename(&output_path, &source).map_err(|error| format!("Could not replace recording: {error}"))?;
+        Ok(source.to_string_lossy().into_owned())
+    } else {
+        Ok(output_path.to_string_lossy().into_owned())
+    }
+}
+
 #[tauri::command]
 fn write_recording_chunk(path: String, bytes: Vec<u8>, first_chunk: bool) -> Result<(), String> {
     #[cfg(target_os = "macos")]
@@ -373,7 +579,7 @@ fn delete_recording_file(path: String) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![native_capture_choose_source, native_capture_start, native_capture_pause, native_capture_set_microphone, native_capture_stop, native_capture_snapshot, read_recording_file, recording_file_size, request_screen_capture_permission, open_capture_privacy_settings, choose_recording_directory, create_recording_file, write_recording_chunk, create_temporary_recording_file, append_temporary_recording_chunk, finalize_temporary_recording_file, import_recording_file, copy_recording_file, delete_recording_file])
+        .invoke_handler(tauri::generate_handler![native_capture_choose_source, native_capture_start, native_capture_pause, native_capture_set_microphone, native_capture_stop, native_capture_snapshot, read_recording_file, recording_file_size, request_screen_capture_permission, open_capture_privacy_settings, choose_recording_directory, create_recording_file, write_recording_chunk, create_temporary_recording_file, append_temporary_recording_chunk, finalize_temporary_recording_file, import_recording_file, copy_recording_file, export_recording_file, estimate_export_size, embed_thumbnail_in_video, delete_recording_file])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

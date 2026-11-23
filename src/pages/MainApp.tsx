@@ -6,13 +6,14 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "../App.css";
 import { Icon } from "../components/Icon";
+import { generateVideoThumbnail, dataUrlToBytes } from "../utils/thumbnail";
 import Sidebar from "../components/Sidebar";
 import LibraryPage from "./LibraryPage";
 import RecordingDetailPage from "./RecordingDetailPage";
 import RecordingPage from "./RecordingPage";
 import SettingsPage from "./SettingsPage";
 import { recordingEvents } from "../features/recording/recordingEvents";
-import { copyRecordingFile, readRecordingBlob, readVideos, removeVideo, writeSetting, putVideo, readSetting } from "../services/recordingStorage";
+import { readRecordingBlob, readVideos, removeVideo, writeSetting, putVideo, readSetting } from "../services/recordingStorage";
 import type { RecordingPreferences, VideoItem } from "../shared/types";
 import { useLibraryStore } from "../stores/useLibraryStore";
 
@@ -28,7 +29,20 @@ function MainShell() {
   const previewVideo = useRef<HTMLVideoElement>(null);
 
   const refresh = useCallback(async () => {
-    try { setVideos(await readVideos()); }
+    try {
+      const loaded = await readVideos();
+      setVideos(loaded);
+      const backfillAll = !localStorage.getItem("thumbnail-backfill-v2");
+      if (backfillAll) localStorage.setItem("thumbnail-backfill-v2", "1");
+      void Promise.all(loaded.filter((video) => video.filePath && (backfillAll || !video.thumbnail)).map(async (video) => {
+        const thumbnail = await generateVideoThumbnail(video.filePath as string, video.mimeType || "video/mp4");
+        if (!thumbnail) return;
+        const updated = { ...video, thumbnail };
+        await putVideo(updated);
+        const current = useLibraryStore.getState().videos;
+        setVideos(current.map((item) => item.id === video.id ? updated : item));
+      }));
+    }
     catch { setError("The local library could not be opened. Restart the app and try again."); }
   }, [setVideos, setError]);
 
@@ -145,16 +159,31 @@ function MainShell() {
     } catch { setError("Could not delete this recording. Please try again."); }
   };
 
-  const exportSelected = async () => {
+  const exportSelected = async (quality: "high" | "standard" | "low" = "standard") => {
     if (!selected) return;
     try {
-      const extension = (selected.mimeType || "video/mp4").includes("mp4") ? "mp4" : "webm";
-      const filePath = await copyRecordingFile(selected.filePath || "", `${selected.title.replace(/[^a-z0-9-_ ]/gi, "").trim() || "recodex-recording"}.${extension}`, saveDirectory || null);
+      const filePath = await invoke<string>("export_recording_file", { sourcePath: selected.filePath || "", directory: saveDirectory || null, suggestedName: `${selected.title.replace(/[^a-z0-9-_ ]/gi, "").trim() || "recodex-recording"}-${quality}.mp4`, quality, thumbnailBytes: selected.thumbnail ? Array.from(dataUrlToBytes(selected.thumbnail)) : [] });
       const updated = { ...selected, filePath: selected.filePath || filePath, filePaths: [...new Set([...(selected.filePaths || (selected.filePath ? [selected.filePath] : [])), filePath])] };
       await putVideo(updated);
       setVideos(videos.map((item) => item.id === updated.id ? updated : item));
-      setNotice("Export saved to your save location");
+      setNotice(`Exported (${quality} quality): ${filePath}`);
     } catch (cause) { setError(cause instanceof Error ? `Export could not be saved. ${cause.message}` : "Export could not be saved."); }
+  };
+
+  const addCustomThumbnail = async (imageDataUrl: string) => {
+    if (!selected) return;
+    try {
+      const updatedThumbnail = { ...selected, thumbnail: imageDataUrl };
+      await putVideo(updatedThumbnail);
+      setVideos(videos.map((item) => item.id === updatedThumbnail.id ? updatedThumbnail : item));
+      const bytes = Array.from(dataUrlToBytes(imageDataUrl));
+      const filePath = await invoke<string>("embed_thumbnail_in_video", { sourcePath: selected.filePath || "", thumbnailBytes: bytes, inPlace: true });
+      const size = await invoke<number>("recording_file_size", { path: filePath });
+      const updated = { ...updatedThumbnail, filePath, sizeBytes: size };
+      await putVideo(updated);
+      setVideos(videos.map((item) => item.id === updated.id ? updated : item));
+      setNotice("Custom thumbnail added to the video");
+    } catch (cause) { setError(cause instanceof Error ? `Could not add thumbnail. ${cause.message}` : "Could not add thumbnail."); }
   };
 
   const isRecordingPage = location.pathname === "/recording";
@@ -169,7 +198,7 @@ function MainShell() {
         <Routes>
           <Route path="/" element={<LibraryPage videos={videos} filtered={filtered.slice(0, 3)} query={query} showToolbar={false} onQueryChange={setQuery} searchInput={searchInput} sortOrder={sortOrder} onSortChange={setSortOrder} view={view} onViewChange={setView} onNewRecording={() => void openRecorder()} onOpenVideo={(video) => navigate(`/recordings/${video.id}`)} />} />
           <Route path="/recording" element={<RecordingPage videos={videos} filtered={filtered} query={query} onQueryChange={setQuery} searchInput={searchInput} sortOrder={sortOrder} onSortChange={setSortOrder} view={view} onViewChange={setView} onOpenVideo={(video) => navigate(`/recordings/${video.id}`)} />} />
-          <Route path="/recordings/:id" element={<RecordingDetailRoute videos={videos} previewVideo={previewVideo} renaming={renaming} draftTitle={draftTitle} onDraftTitleChange={setDraftTitle} onStartRename={() => { if (selected) { setDraftTitle(selected.title); setRenaming(true); } }} onCancelRename={() => setRenaming(false)} onUpdateTitle={() => void updateTitle()} onExport={() => void exportSelected()} onDelete={() => setConfirmDelete(true)} onBack={() => navigate("/")} />} />
+          <Route path="/recordings/:id" element={<RecordingDetailRoute videos={videos} previewVideo={previewVideo} renaming={renaming} draftTitle={draftTitle} onDraftTitleChange={setDraftTitle} onStartRename={() => { if (selected) { setDraftTitle(selected.title); setRenaming(true); } }} onCancelRename={() => setRenaming(false)} onUpdateTitle={() => void updateTitle()} onExport={(quality: string) => void exportSelected(quality as "high" | "standard" | "low")} onAddThumbnail={(imageDataUrl: string) => void addCustomThumbnail(imageDataUrl)} onDelete={() => setConfirmDelete(true)} onBack={() => navigate("/")} />} />
           <Route path="/account" element={<SettingsPage saveDirectory={saveDirectory} recordingPreferences={recordingPreferences} onChooseSaveDirectory={() => void chooseSaveDirectory()} onResetSaveDirectory={() => void resetSaveDirectory()} onRecordingPreferencesChange={(preferences) => void updateRecordingPreferences(preferences)} />} />
           <Route path="/settings" element={<SettingsPage saveDirectory={saveDirectory} recordingPreferences={recordingPreferences} onChooseSaveDirectory={() => void chooseSaveDirectory()} onResetSaveDirectory={() => void resetSaveDirectory()} onRecordingPreferencesChange={(preferences) => void updateRecordingPreferences(preferences)} />} />
           <Route path="/preferences" element={<SettingsPage saveDirectory={saveDirectory} recordingPreferences={recordingPreferences} onChooseSaveDirectory={() => void chooseSaveDirectory()} onResetSaveDirectory={() => void resetSaveDirectory()} onRecordingPreferencesChange={(preferences) => void updateRecordingPreferences(preferences)} />} />
@@ -184,11 +213,11 @@ function MainShell() {
   );
 }
 
-function RecordingDetailRoute({ videos, previewVideo, renaming, draftTitle, onDraftTitleChange, onStartRename, onCancelRename, onUpdateTitle, onExport, onDelete, onBack }: any) {
+function RecordingDetailRoute({ videos, previewVideo, renaming, draftTitle, onDraftTitleChange, onStartRename, onCancelRename, onUpdateTitle, onExport, onAddThumbnail, onDelete, onBack }: any) {
   const { id } = useParams();
   const video = videos.find((item: VideoItem) => item.id === id);
   if (!video) return <Navigate to="/" replace />;
-  return <RecordingDetailPage video={video} previewVideo={previewVideo} renaming={renaming} draftTitle={draftTitle} onDraftTitleChange={onDraftTitleChange} onStartRename={onStartRename} onCancelRename={onCancelRename} onUpdateTitle={onUpdateTitle} onExport={onExport} onDelete={onDelete} onBack={onBack} />;
+  return <RecordingDetailPage video={video} previewVideo={previewVideo} renaming={renaming} draftTitle={draftTitle} onDraftTitleChange={onDraftTitleChange} onStartRename={onStartRename} onCancelRename={onCancelRename} onUpdateTitle={onUpdateTitle} onExport={onExport} onAddThumbnail={onAddThumbnail} onDelete={onDelete} onBack={onBack} />;
 }
 
 export default function MainApp() {

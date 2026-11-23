@@ -8,6 +8,7 @@ import { Icon } from "../../components/Icon";
 import RecordingIssueModal from "../../components/RecordingIssueModal";
 import RecorderSetupModal from "../../components/RecorderSetupModal";
 import { friendlyError, formatFileSize, formatTime } from "../../utils/format";
+import { generateVideoThumbnail } from "../../utils/thumbnail";
 import { recordingEvents } from "./recordingEvents";
 import type { AnnotationTool, CaptureMode, RecordingPreferences, Source, VideoItem, WidgetStatus } from "../../shared/types";
 import { appendBlobToTemporaryFile, copyRecordingFile, createTemporaryRecordingFile, finalizeTemporaryRecordingFile, putVideo, readBlobDuration, readRecordingBlob, readRecordingFileSize, readSetting, writeSetting } from "../../services/recordingStorage";
@@ -302,7 +303,8 @@ export default function RecordingSetupWindow() {
       let externalSaveError = "";
       try { filePaths.push(await copyRecordingFile(filePath, suggestedName, saveDirectory.current)); }
       catch (cause) { externalSaveError = cause instanceof Error ? cause.message : "Could not copy to the selected save location."; }
-      const savedVideo = { ...video, filePath, filePaths };
+      const thumbnail = await generateVideoThumbnail(filePath, mimeType);
+      const savedVideo = { ...video, filePath, filePaths, thumbnail };
       await putVideo(savedVideo);
       saved = true;
       setNotice(externalSaveError ? `Saved in Recodex. Could not copy to the selected folder: ${externalSaveError}` : `Saved ${extension.toUpperCase()} recording${saveDirectory.current ? " to your chosen location" : " to Documents/Recodex"}`);

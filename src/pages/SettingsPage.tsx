@@ -1,6 +1,6 @@
 import PageFooter from "../components/PageFooter";
 import { useLocation } from "react-router-dom";
-import { UserRound, SlidersHorizontal, CircleHelp, Folder, ShieldCheck, RotateCcw, HardDrive, Bell, Monitor, Keyboard, Mail, ChevronRight, Camera } from "lucide-react";
+import { Folder, ShieldCheck, RotateCcw, HardDrive, Bell, Monitor, Keyboard, Mail, ChevronRight, Camera } from "lucide-react";
 import type { RecordingPreferences } from "../shared/types";
 
 type Props = { saveDirectory: string; recordingPreferences: RecordingPreferences; onChooseSaveDirectory: () => void; onResetSaveDirectory: () => void; onRecordingPreferencesChange: (preferences: RecordingPreferences) => void };
