@@ -7,7 +7,7 @@ import { Icon } from "../components/Icon";
 import LibraryPage from "./LibraryPage";
 import RecordingDetailPage from "./RecordingDetailPage";
 import { recordingEvents } from "../features/recording/recordingEvents";
-import { readVideos, removeVideo, saveBlobToDisk, writeSetting, putVideo, readSetting } from "../services/recordingStorage";
+import { copyRecordingFile, readRecordingBlob, readVideos, removeVideo, writeSetting, putVideo, readSetting } from "../services/recordingStorage";
 import type { VideoItem } from "../shared/types";
 
 /** Library and preferences only. Capture runs in the dedicated recorder webview. */
@@ -37,14 +37,9 @@ export default function MainApp() {
     void writeSetting("isRecording", false).catch(() => undefined);
     void readSetting<string>("saveDirectory").then((value) => setSaveDirectory(value || "")).catch(() => undefined);
     let unlistenLibrary: (() => void) | undefined;
-    let unlistenMoved: (() => void) | undefined;
     void listen<{ id: string }>(recordingEvents.libraryChanged, () => { void refresh(); })
       .then((stop) => { unlistenLibrary = stop; }).catch((cause) => console.warn("Could not listen for library updates", cause));
-    void listen<{ label: string; x: number; y: number }>("recora:widget-moved", (event) => {
-      try { localStorage.setItem(`recora-widget-position-${event.payload.label}`, JSON.stringify({ x: event.payload.x, y: event.payload.y })); }
-      catch { /* position remains available for the current session */ }
-    }).then((stop) => { unlistenMoved = stop; }).catch((cause) => console.warn("Could not persist widget position", cause));
-    return () => { unlistenLibrary?.(); unlistenMoved?.(); };
+    return () => { unlistenLibrary?.(); };
   }, [refresh]);
 
   useEffect(() => {
@@ -54,10 +49,15 @@ export default function MainApp() {
   }, [notice]);
 
   useEffect(() => {
-    if (!selected || !previewVideo.current) return;
-    const url = URL.createObjectURL(selected.blob);
-    previewVideo.current.src = url;
-    return () => URL.revokeObjectURL(url);
+    if (!selected?.filePath || !previewVideo.current) return;
+    let cancelled = false;
+    let url: string | null = null;
+    void readRecordingBlob(selected.filePath, selected.mimeType || "video/mp4").then((blob) => {
+      if (cancelled || !previewVideo.current) return;
+      url = URL.createObjectURL(blob);
+      previewVideo.current.src = url;
+    }).catch((cause) => setError(cause instanceof Error ? `Could not open this recording. ${cause.message}` : "Could not open this recording."));
+    return () => { cancelled = true; if (url) URL.revokeObjectURL(url); };
   }, [selected]);
 
   const filtered = useMemo(() => videos
@@ -93,7 +93,7 @@ export default function MainApp() {
   const resetSaveDirectory = async () => {
     await writeSetting("saveDirectory", "");
     setSaveDirectory("");
-    setNotice("Recordings will save to Movies/Recora");
+    setNotice("Recordings will save to Documents/Recora");
   };
 
   const updateTitle = async () => {
@@ -120,8 +120,8 @@ export default function MainApp() {
   const exportSelected = async () => {
     if (!selected) return;
     try {
-      const extension = selected.blob.type.includes("mp4") ? "mp4" : "webm";
-      const filePath = await saveBlobToDisk(selected.blob, `${selected.title.replace(/[^a-z0-9-_ ]/gi, "").trim() || "recora-recording"}.${extension}`, saveDirectory || null);
+      const extension = (selected.mimeType || "video/mp4").includes("mp4") ? "mp4" : "webm";
+      const filePath = await copyRecordingFile(selected.filePath || "", `${selected.title.replace(/[^a-z0-9-_ ]/gi, "").trim() || "recora-recording"}.${extension}`, saveDirectory || null);
       const updated = { ...selected, filePath: selected.filePath || filePath, filePaths: [...new Set([...(selected.filePaths || (selected.filePath ? [selected.filePath] : [])), filePath])] };
       await putVideo(updated); setSelected(updated); setVideos((items) => items.map((item) => item.id === updated.id ? updated : item)); setNotice("Export saved to your save location");
     } catch (cause) { setError(cause instanceof Error ? `Export could not be saved. ${cause.message}` : "Export could not be saved."); }
@@ -134,7 +134,7 @@ export default function MainApp() {
       <div className="nav-label">WORKSPACE</div>
       <button className={`nav-item ${!selected ? "active" : ""}`} onClick={() => setSelected(null)}><Icon name="home" /> <span>My recordings</span><span className="nav-count">{videos.length}</span></button>
       <div className="sidebar-bottom">
-        <section className="storage-card save-location-card"><div className="storage-top"><Icon name="folder" size={14} /><span>Save location</span></div><div className="save-location-path" title={saveDirectory || "~/Movies/Recora"}>{saveDirectory ? saveDirectory.split(/[\\/]/).filter(Boolean).slice(-2).join("/") : "Movies/Recora"}</div><div className="save-location-actions"><button onClick={() => void chooseSaveDirectory()}>Change</button>{saveDirectory && <button onClick={() => void resetSaveDirectory()}>Default</button>}</div></section>
+        <section className="storage-card save-location-card"><div className="storage-top"><Icon name="folder" size={14} /><span>Save location</span></div><div className="save-location-path" title={saveDirectory || "~/Documents/Recora"}>{saveDirectory ? saveDirectory.split(/[\\/]/).filter(Boolean).slice(-2).join("/") : "Documents/Recora"}</div><div className="save-location-actions"><button onClick={() => void chooseSaveDirectory()}>Change</button>{saveDirectory && <button onClick={() => void resetSaveDirectory()}>Default</button>}</div></section>
         <div className="storage-card"><div className="storage-top"><span className="storage-dot" /><span>Stored on this device</span></div><div className="storage-note">Your recordings stay private and local.</div></div>
         <button className="profile"><span className="avatar">A</span><span className="profile-copy"><strong>Personal workspace</strong><small>Local library</small></span><Icon name="more" size={17} /></button>
       </div>

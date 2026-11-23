@@ -99,7 +99,7 @@
 
 .camera-settings-panel {
   width: 332px;
-  max-height: 365px;
+  max-height: var(--camera-settings-panel-max-height, 365px);
   overflow-y: auto;
   padding: 13px 14px 11px;
   border: 1px solid rgba(242, 242, 242, .15);

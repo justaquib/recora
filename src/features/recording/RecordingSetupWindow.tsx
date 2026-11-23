@@ -9,7 +9,7 @@ import RecorderSetupModal from "../../components/RecorderSetupModal";
 import { friendlyError, formatFileSize, formatTime } from "../../utils/format";
 import { recordingEvents } from "./recordingEvents";
 import type { AnnotationTool, CaptureMode, Source, VideoItem, WidgetStatus } from "../../shared/types";
-import { putVideo, readBlobDuration, saveBlobToDisk, readSetting, writeSetting } from "../../services/recordingStorage";
+import { appendBlobToTemporaryFile, copyRecordingFile, createTemporaryRecordingFile, finalizeTemporaryRecordingFile, putVideo, readBlobDuration, readRecordingBlob, readRecordingFileSize, readSetting, writeSetting } from "../../services/recordingStorage";
 
 export default function RecordingSetupWindow() {
   const [captureMode, setCaptureMode] = useState<CaptureMode>("screen");
@@ -40,7 +40,8 @@ export default function RecordingSetupWindow() {
   const micStream = useRef<MediaStream | null>(null);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const nativeRecordingPath = useRef<string | null>(null);
-  const recordingChunks = useRef<Blob[]>([]);
+  const recordingWriteQueue = useRef<Promise<void>>(Promise.resolve());
+  const recordingWriteError = useRef("");
   const recorderMimeType = useRef("video/webm");
   const recordingSession = useRef("");
   const captureOptions = useRef({ captureMode, cameraEnabled, micEnabled });
@@ -134,14 +135,9 @@ export default function RecordingSetupWindow() {
         const widget = await WebviewWindow.getByLabel(label);
         if (!widget) continue;
         if (shouldShow) {
-          let saved: string | null = null;
-          try { saved = localStorage.getItem(`recora-widget-position-${label}`); } catch { /* use the default placement */ }
-          if (saved) {
-            try {
-              const point = JSON.parse(saved) as { x: number; y: number };
-              await widget.setPosition(new PhysicalPosition(point.x, point.y));
-            } catch { await widget.setPosition(new LogicalPosition(x, y)); }
-          } else await widget.setPosition(new LogicalPosition(x, y));
+          const saved = await readSetting<{ x: number; y: number }>(`widgetPosition:${label}`).catch(() => undefined);
+          if (saved) await widget.setPosition(new PhysicalPosition(saved.x, saved.y));
+          else await widget.setPosition(new LogicalPosition(x, y));
           await widget.show();
         }
         else await widget.hide();
@@ -190,33 +186,32 @@ export default function RecordingSetupWindow() {
     displayStream.current = null; cameraStream.current = null; micStream.current = null;
   };
 
-  const saveRecording = async (blob: Blob, mimeType: string, captureDuration: number, alreadySavedPath: string | null = null) => {
+  const saveRecording = async (temporaryPath: string, mimeType: string, captureDuration: number, mediaDuration: number | null, sizeBytes: number) => {
+    let saved = false;
     try {
-      if (!blob.size) throw new Error(`No media frames were encoded (${mimeType}). Check that the selected capture source is still active.`);
+      if (sizeBytes < 1024) throw new Error(`No usable media was encoded (${mimeType}, ${formatFileSize(sizeBytes)}). Check that the selected capture source is still active. Recovery file: ${temporaryPath}`);
       setRecording(false); setPaused(false);
       const savingStatus: WidgetStatus = { active: true, ready: false, paused: false, elapsed: captureDuration, camera: false, saving: true, savingStage: "saving" };
       await Promise.all(["camera-bubble", "recording-controls", "annotation-overlay"].map((label) => emitTo(label, "recora:widget-status", savingStatus)));
       const extension = mimeType.includes("mp4") ? "mp4" : "webm";
-      const mediaDuration = await readBlobDuration(blob);
       const recordedDuration = mediaDuration ?? captureDuration;
       const incomplete = mediaDuration !== null && captureDuration - mediaDuration > 3;
       if (incomplete) {
-        const recovery = alreadySavedPath ? ` The untouched recovery file is at ${alreadySavedPath}.` : " The incomplete media was not added to the library.";
-        throw new Error(`Recording is incomplete: playable media is ${formatTime(mediaDuration)} but the recorder ran for ${formatTime(captureDuration)}.${recovery}`);
+        throw new Error(`Recording is incomplete: playable media is ${formatTime(mediaDuration)} but the recorder ran for ${formatTime(captureDuration)}. It was not added to the library. Recovery file: ${temporaryPath}`);
       }
-      const video: VideoItem = { id: crypto.randomUUID(), title: `Untitled recording ${new Date().toLocaleDateString()}`, createdAt: Date.now(), duration: recordedDuration, captureDuration, blob, thumbnail: "", mimeType, hasCamera: captureOptions.current.captureMode === "camera" || (captureOptions.current.captureMode === "screen" && captureOptions.current.cameraEnabled), filePath: alreadySavedPath || undefined, filePaths: alreadySavedPath ? [alreadySavedPath] : undefined };
-      await putVideo(video);
       setSavingFile(true);
       await hideRecordingWidgets();
-      const warning = incomplete ? `Recording incomplete: media ${formatTime(mediaDuration!)}; timer ${formatTime(captureDuration)}; ${formatFileSize(blob.size)}.` : "";
-      try {
-        const filePath = alreadySavedPath || await saveBlobToDisk(blob, `${video.title.replace(/[^a-z0-9-_ ]/gi, "").trim() || "recora-recording"}.${extension}`, saveDirectory.current);
-        const savedVideo = { ...video, filePath, filePaths: [filePath] };
-        await putVideo(savedVideo);
-        setNotice(warning || `Saved ${extension.toUpperCase()} recording${saveDirectory.current ? " to your chosen location" : " to Movies/Recora"}`);
-      } catch (cause) {
-        setNotice(warning || (cause instanceof Error ? `Saved in Recora. ${cause.message}` : "Saved in your Recora library"));
-      }
+      const video: VideoItem = { id: crypto.randomUUID(), title: `Untitled recording ${new Date().toLocaleDateString()}`, createdAt: Date.now(), duration: recordedDuration, captureDuration, sizeBytes, thumbnail: "", mimeType, hasCamera: captureOptions.current.captureMode === "camera" || (captureOptions.current.captureMode === "screen" && captureOptions.current.cameraEnabled) };
+      const suggestedName = `${video.title.replace(/[^a-z0-9-_ ]/gi, "").trim() || "recora-recording"}.${extension}`;
+      const filePath = await finalizeTemporaryRecordingFile(temporaryPath, suggestedName);
+      const filePaths = [filePath];
+      let externalSaveError = "";
+      try { filePaths.push(await copyRecordingFile(filePath, suggestedName, saveDirectory.current)); }
+      catch (cause) { externalSaveError = cause instanceof Error ? cause.message : "Could not copy to the selected save location."; }
+      const savedVideo = { ...video, filePath, filePaths };
+      await putVideo(savedVideo);
+      saved = true;
+      setNotice(externalSaveError ? `Saved in Recora. Could not copy to the selected folder: ${externalSaveError}` : `Saved ${extension.toUpperCase()} recording${saveDirectory.current ? " to your chosen location" : " to Documents/Recora"}`);
       await emitTo("main", recordingEvents.libraryChanged, { id: video.id });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The recording could not be finalized.");
@@ -225,10 +220,14 @@ export default function RecordingSetupWindow() {
       await writeSetting("isRecording", false).catch(() => undefined);
       await hideRecordingWidgets();
       nativeRecordingPath.current = null;
-      await currentWindow.setIgnoreCursorEvents(false).catch(() => undefined);
-      await currentWindow.hide().catch(() => undefined);
-      mediaRecorder.current = null; recordingChunks.current = []; recordingSession.current = ""; stopRequested.current = false;
+      mediaRecorder.current = null; recordingSession.current = ""; stopRequested.current = false;
       cleanupCapture(); setRecording(false); setPaused(false); setSavingFile(false);
+      if (saved) {
+        await currentWindow.setIgnoreCursorEvents(false).catch(() => undefined);
+        await currentWindow.hide().catch(() => undefined);
+      } else {
+        await restoreSetupWindow();
+      }
     }
   };
 
@@ -240,7 +239,7 @@ export default function RecordingSetupWindow() {
       if (captureMode === "screen") {
         const screenPermission = await invoke<boolean>("request_screen_capture_permission");
         if (!screenPermission) throw new Error("macOS Screen Recording access is not enabled for Recora. Enable it under System Settings → Privacy & Security → Screen Recording, then fully quit and reopen Recora.");
-        nativePath = await invoke<string>("create_recording_file", { directory: saveDirectory.current, suggestedName: `Recora recording ${Date.now()}.mp4` });
+        nativePath = await createTemporaryRecordingFile(`Recora recording ${Date.now()}.mp4`);
         try {
           await invoke("native_capture_choose_source");
         } catch (cause) {
@@ -297,19 +296,28 @@ export default function RecordingSetupWindow() {
       const recorder = new MediaRecorder(output, mimeType ? { mimeType } : undefined);
       mediaRecorder.current = recorder;
       recorderMimeType.current = recorder.mimeType || mimeType || "video/webm";
-      recordingChunks.current = [];
+      const extension = recorderMimeType.current.includes("mp4") ? "mp4" : "webm";
+      const temporaryPath = await createTemporaryRecordingFile(`Recora recording ${Date.now()}.${extension}`);
+      recordingWriteQueue.current = Promise.resolve();
+      recordingWriteError.current = "";
       let dataEvents = 0;
       let totalBytes = 0;
       let encoderError = "";
       recorder.ondataavailable = (event) => {
         dataEvents += 1;
         totalBytes += event.data.size;
-        if (event.data.size > 0) recordingChunks.current.push(event.data);
+        if (event.data.size > 0) {
+          recordingWriteQueue.current = recordingWriteQueue.current.then(() => appendBlobToTemporaryFile(temporaryPath, event.data)).catch((cause) => {
+            recordingWriteError.current = cause instanceof Error ? cause.message : "A recording chunk could not be written to temporary storage.";
+          });
+        }
       };
       recorder.onerror = (event) => { encoderError = (event as Event & { error?: DOMException }).error?.message || "The media encoder reported an error."; };
-      recorder.onstop = () => {
+      recorder.onstop = () => { void (async () => {
         const finalMimeType = recorder.mimeType || recorderMimeType.current;
-        const blob = new Blob(recordingChunks.current, { type: finalMimeType });
+        await recordingWriteQueue.current;
+        if (recordingWriteError.current) throw new Error(`${recordingWriteError.current} The temporary recording remains at ${temporaryPath}.`);
+        const blob = await readRecordingBlob(temporaryPath, finalMimeType);
         // WebKit can produce only a container header without encoded video.
         // Never persist that tiny payload as a valid recording.
         if (blob.size < 1024) {
@@ -318,15 +326,18 @@ export default function RecordingSetupWindow() {
             const dimensions = settings.width && settings.height ? `:${settings.width}x${settings.height}` : "";
             return `${track.kind}:${track.readyState}${track.enabled ? ":enabled" : ":disabled"}${track.muted ? ":muted" : ""}${dimensions}`;
           }).join(", ") || "no tracks";
-          setError(encoderError || `Only ${formatFileSize(totalBytes)} was encoded across ${dataEvents} data events (${finalMimeType}). No usable video frames were encoded. Input tracks: ${tracks}.`);
-          void writeSetting("isRecording", false).catch(() => undefined);
-          recordingSession.current = ""; stopRequested.current = false; mediaRecorder.current = null; recordingChunks.current = [];
-          void hideRecordingWidgets(); cleanupCapture(); setRecording(false); setPaused(false);
-          void restoreSetupWindow();
-          return;
+          throw new Error(encoderError || `Only ${formatFileSize(totalBytes)} was encoded across ${dataEvents} data events (${finalMimeType}). No usable video frames were encoded. Input tracks: ${tracks}. Temporary file: ${temporaryPath}`);
         }
-        void saveRecording(blob, finalMimeType, latestElapsed.current);
-      };
+        const mediaDuration = await readBlobDuration(blob);
+        await saveRecording(temporaryPath, finalMimeType, latestElapsed.current, mediaDuration, blob.size);
+      })().catch(async (cause) => {
+        setError(cause instanceof Error ? cause.message : "The recording could not be written to disk.");
+        await writeSetting("isRecording", false).catch(() => undefined);
+        await hideRecordingWidgets();
+        recordingSession.current = ""; stopRequested.current = false; mediaRecorder.current = null;
+        cleanupCapture(); setRecording(false); setPaused(false);
+        await restoreSetupWindow();
+      }); };
       if (captureMode === "screen") videoSource.getVideoTracks()[0].addEventListener("ended", stopRecording, { once: true });
       recorder.start(1000);
       startTime.current = Date.now();
@@ -356,14 +367,12 @@ export default function RecordingSetupWindow() {
       void (async () => {
         try {
           await invoke("native_capture_stop", { expectedDurationSeconds: latestElapsed.current });
-          const bytes = await invoke<number[]>("read_recording_file", { path: nativePath });
-          if (bytes.length < 1024) throw new Error(`ScreenCaptureKit wrote only ${formatFileSize(bytes.length)}. No usable frames were captured.`);
-          const blob = new Blob([Uint8Array.from(bytes).buffer], { type: "video/mp4" });
-          await saveRecording(blob, "video/mp4", latestElapsed.current, nativePath);
+          const sizeBytes = await readRecordingFileSize(nativePath);
+          await saveRecording(nativePath, "video/mp4", latestElapsed.current, latestElapsed.current, sizeBytes);
         } catch (cause) {
           const detail = friendlyError(cause);
           console.error("Native recording finalization failed", { path: nativePath, error: cause });
-          setError(`${detail} Any recovery files were kept in your selected save location.`);
+          setError(`${detail} Recovery files remain in Recora's app-local .temp folder.`);
           await writeSetting("isRecording", false).catch(() => undefined);
           await hideRecordingWidgets();
           nativeRecordingPath.current = null; recordingSession.current = ""; stopRequested.current = false;
@@ -460,6 +469,7 @@ export default function RecordingSetupWindow() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let unlistenPosition: (() => void) | undefined;
+    let positionWriteTimer: number | null = null;
     let unlistenAnnotation: (() => void) | undefined;
     let unlistenCameraSettings: (() => void) | undefined;
     void listen<{ action: "pause" | "stop" | "home" | "microphone" | "bubble" }>("recora:widget-action", async (event) => {
@@ -474,6 +484,19 @@ export default function RecordingSetupWindow() {
           captureOptions.current = { ...captureOptions.current, cameraEnabled: false };
           setCameraEnabled(false);
         }
+        const cameraBubble = await WebviewWindow.getByLabel("camera-bubble");
+        await emitTo("camera-bubble", "recora:widget-status", {
+          active: true,
+          ready: true,
+          paused: pausedRef.current,
+          elapsed: latestElapsed.current,
+          camera: visible && captureOptions.current.captureMode === "screen" && captureOptions.current.cameraEnabled,
+          cameraDeviceId: cameraId,
+          screen: captureOptions.current.captureMode === "screen",
+          bubble: visible,
+        } satisfies WidgetStatus).catch(() => undefined);
+        if (visible) await cameraBubble?.show().catch(() => undefined);
+        else await cameraBubble?.hide().catch(() => undefined);
       }
       if (event.payload.action === "home") {
         const main = await WebviewWindow.getByLabel("main");
@@ -481,7 +504,11 @@ export default function RecordingSetupWindow() {
       }
     }).then((stop) => { unlisten = stop; }).catch((cause) => console.warn("Could not listen for widget actions", cause));
     void listen<{ label: string; x: number; y: number }>("recora:widget-moved", (event) => {
-      try { localStorage.setItem(`recora-widget-position-${event.payload.label}`, JSON.stringify({ x: event.payload.x, y: event.payload.y })); } catch { /* position still moves for this session */ }
+      if (positionWriteTimer !== null) window.clearTimeout(positionWriteTimer);
+      positionWriteTimer = window.setTimeout(() => {
+        void writeSetting(`widgetPosition:${event.payload.label}`, { x: event.payload.x, y: event.payload.y }).catch((cause) => console.warn("Could not save floating widget position", cause));
+        positionWriteTimer = null;
+      }, 180);
     }).then((stop) => { unlistenPosition = stop; }).catch((cause) => console.warn("Could not persist floating widget position", cause));
     void listen<{ camera?: boolean; cameraDeviceId?: string }>("recora:camera-settings", (event) => {
       if (event.payload.camera !== undefined) {
@@ -516,7 +543,7 @@ export default function RecordingSetupWindow() {
         setNotice(cause instanceof Error ? cause.message : "Could not freeze the screen for annotation.");
       }
     }).then((stop) => { unlistenAnnotation = stop; }).catch((cause) => console.warn("Could not listen for annotation requests", cause));
-    return () => { unlisten?.(); unlistenPosition?.(); unlistenAnnotation?.(); unlistenCameraSettings?.(); };
+    return () => { if (positionWriteTimer !== null) window.clearTimeout(positionWriteTimer); unlisten?.(); unlistenPosition?.(); unlistenAnnotation?.(); unlistenCameraSettings?.(); };
   }, []);
 
   const skipCountdown = () => {

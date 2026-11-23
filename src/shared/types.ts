@@ -4,7 +4,8 @@ export type VideoItem = {
   createdAt: number;
   duration: number;
   captureDuration?: number;
-  blob: Blob;
+  blob?: Blob;
+  sizeBytes: number;
   thumbnail: string;
   hasCamera: boolean;
   filePath?: string;

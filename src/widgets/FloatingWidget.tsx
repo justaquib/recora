@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { emitTo, listen } from "@tauri-apps/api/event";
-import { getCurrentWindow, LogicalSize, PhysicalPosition } from "@tauri-apps/api/window";
+import { availableMonitors, getCurrentWindow, LogicalSize, PhysicalPosition } from "@tauri-apps/api/window";
 import "../App.css";
 import "./FloatingWidget.css";
 import { Icon } from "../components/Icon";
@@ -19,6 +19,7 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
   const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
   const [cameraLarge, setCameraLarge] = useState(false);
   const [cameraError, setCameraError] = useState("");
+  const settingsOpenRef = useRef(false);
   const shown = useRef(false);
   const statusRef = useRef(status);
   const elapsedBase = useRef(0);
@@ -26,7 +27,8 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
   const elapsedRef = useRef(0);
   const cameraPreview = useRef<HTMLVideoElement>(null);
   const widgetCameraStream = useRef<MediaStream | null>(null);
-  const cameraWindowPosition = useRef<PhysicalPosition | null>(null);
+  const visibilityRevision = useRef(0);
+  const visibilityQueue = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     document.documentElement.classList.add("widget-document");
@@ -36,17 +38,18 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
     let unlistenStatus: (() => void) | undefined;
     let unlistenMoved: (() => void) | undefined;
     let unlistenAnnotation: (() => void) | undefined;
-    const updateVisibility = async (next: WidgetStatus) => {
+    const updateVisibility = (next: WidgetStatus) => {
+      const revision = ++visibilityRevision.current;
       const shouldShow = kind === "controls"
         ? next.active
         : next.active && !next.saving && (next.bubble ?? next.camera);
-      if (shouldShow && !shown.current) {
-        try { await current.show(); shown.current = true; }
-        catch (cause) { console.warn("Could not show widget", cause); }
-      } else if (!shouldShow && shown.current) {
-        await current.hide().catch(() => undefined);
-        shown.current = false;
-      }
+      visibilityQueue.current = visibilityQueue.current.catch(() => undefined).then(async () => {
+        if (revision !== visibilityRevision.current) return;
+        try {
+          if (shouldShow && !shown.current) { await current.show(); shown.current = true; }
+          else if (!shouldShow && shown.current) { await current.hide(); shown.current = false; }
+        } catch (cause) { console.warn(`Could not ${shouldShow ? "show" : "hide"} widget`, cause); }
+      });
     };
     void listen<WidgetStatus>("recora:widget-status", (event) => {
       const next = event.payload;
@@ -71,11 +74,11 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
       const merged = { ...previous, ...next, cameraFilter: next.cameraFilter ?? previous.cameraFilter ?? "original", cameraBlur: next.cameraBlur ?? previous.cameraBlur ?? false, avatar: next.avatar ?? previous.avatar ?? AVATARS[0] };
       statusRef.current = merged;
       setStatus(merged);
-      void updateVisibility(merged);
+      updateVisibility(merged);
     }).then((stop) => { unlistenStatus = stop; }).catch((cause) => console.warn("Could not listen for widget status", cause));
     const label = kind === "camera" ? "camera-bubble" : "recording-controls";
     void current.onMoved(({ payload }) => {
-      void emitTo("recording-setup", "recora:widget-moved", { label, x: payload.x, y: payload.y }).catch(() => undefined);
+      void current.scaleFactor().then((scale) => emitTo("recording-setup", "recora:widget-moved", { label, x: payload.x + (kind === "camera" && settingsOpenRef.current ? Math.round(60 * scale) : 0), y: payload.y })).catch(() => undefined);
     }).then((stop) => { unlistenMoved = stop; }).catch((cause) => console.warn("Could not persist widget position", cause));
     if (kind === "controls") void listen<{ tool: AnnotationTool }>("recora:annotation-state", (event) => setActiveTool(event.payload.tool))
       .then((stop) => { unlistenAnnotation = stop; }).catch((cause) => console.warn("Could not sync annotation tools", cause));
@@ -169,14 +172,28 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
         const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
         setCameraDevices(devices.filter((device) => device.kind === "videoinput").map((device, index) => ({ deviceId: device.deviceId, label: device.label || `Camera ${index + 1}` })));
         const position = await current.outerPosition();
-        cameraWindowPosition.current = position;
-        await current.setSize(CAMERA_SETTINGS_SIZE);
-        await current.setPosition(new PhysicalPosition(position.x - Math.round(64 * scale), position.y));
+        const monitors = await availableMonitors();
+        const centerX = position.x + Math.round(120 * scale);
+        const centerY = position.y + Math.round(130 * scale);
+        const monitor = monitors.find((item) => centerX >= item.position.x && centerX <= item.position.x + item.size.width && centerY >= item.position.y && centerY <= item.position.y + item.size.height);
+        const workArea = monitor?.workArea;
+        const width = CAMERA_SETTINGS_SIZE.width * scale;
+        const height = Math.min(CAMERA_SETTINGS_SIZE.height, (workArea?.size.height ?? CAMERA_SETTINGS_SIZE.height * scale) / scale) * scale;
+        const desiredX = position.x - Math.round(60 * scale);
+        const desiredY = position.y;
+        const x = workArea ? Math.max(workArea.position.x, Math.min(desiredX, workArea.position.x + workArea.size.width - width)) : desiredX;
+        const y = workArea ? Math.max(workArea.position.y, Math.min(desiredY, workArea.position.y + workArea.size.height - height)) : desiredY;
+        document.documentElement.style.setProperty("--camera-settings-panel-max-height", `${Math.max(180, height / scale - 260)}px`);
+        settingsOpenRef.current = true;
+        await current.setSize(new LogicalSize(CAMERA_SETTINGS_SIZE.width, height / scale));
+        await current.setPosition(new PhysicalPosition(Math.round(x), Math.round(y)));
         setSettingsOpen(true);
       } else {
+        const position = await current.outerPosition();
+        settingsOpenRef.current = false;
         await current.setSize(CAMERA_CLOSED_SIZE);
-        if (cameraWindowPosition.current) await current.setPosition(cameraWindowPosition.current);
-        cameraWindowPosition.current = null;
+        await current.setPosition(new PhysicalPosition(position.x + Math.round(60 * scale), position.y));
+        document.documentElement.style.removeProperty("--camera-settings-panel-max-height");
         setSettingsOpen(false);
         setAvatarPickerOpen(false);
       }

@@ -12,17 +12,17 @@ The query parameter `?widget=...` selects which React tree is mounted (`src/App.
 | --- | --- | --- |
 | (none) | `MainApp` | Library, save folder, launch recording |
 | `setup` | `RecordingSetupWindow` | Capture setup and lifecycle owner |
-| `camera` / `controls` / `home` | `FloatingWidget` | Floating camera bubble, recorder controls, home button |
+| `camera` / `controls` | `FloatingWidget` | Floating camera bubble and recorder controls |
 | `annotations` | `AnnotationWidget` | Annotation overlay |
 
-Each webview has its own JS runtime. Cross-window state is not shared via React/Zustand; coordination happens through Tauri events and the typed protocol in `src/features/recording/recordingEvents.ts`.
+Each webview has its own JS runtime. Live coordination happens through Tauri events; durable preferences such as widget positions use the shared IndexedDB settings store. A Zustand store would be local to each webview, so it is not used for cross-window persistence.
 
 ## Frontend layers
 
 - `src/pages/` — page composition only.
 - `src/components/` — reusable UI.
 - `src/features/recording/` — capture setup webview and event protocol.
-- `src/services/` — IndexedDB and native file persistence.
+- `src/services/` — recording metadata in IndexedDB and media files on disk.
 - `src/shared/` — domain types.
 - `src/utils/` — formatting and error helpers.
 - `src/widgets/` — floating windows.
@@ -33,14 +33,15 @@ Tauri commands live in `src-tauri/src/lib.rs`. Screen capture on macOS is implem
 
 ## Data
 
-- IndexedDB (`recora-library`, v3): `recordings`, `capture-sessions`, `settings`.
-- Recordings are persisted to disk via `create_recording_file` / `write_recording_chunk`.
+- IndexedDB (`recora-library`, v4): recording metadata and preferences only. Older records with media blobs migrate to disk on library load.
+- Recording media is written to the app-local `.temp` directory while capturing, merged/finalized on disk, then moved into the app-local `recordings` directory. Successful finalization removes the `.temp` file and native segment files; failed finalization keeps recovery files. A copy is placed in the configured save folder. The library stores file paths and metadata, never the media bytes.
 - Save folder preference is stored in `settings`.
+- When no folder is selected, the app copies finalized recordings to `~/Documents/Recora`, creating the directory when needed.
 
 ## Rules
 
 - Keep the main window focused on library and save-folder preferences.
 - Keep capture lifecycle in the recorder feature webview.
 - Keep cross-webview messages typed and centralized.
-- Persist the recording blob locally before writing the configured folder.
+- Persist capture chunks to the app-local temporary file before finalization. Do not store video blobs in IndexedDB.
 - Update `docs/project/PROJECT_STATUS.md` when status changes.

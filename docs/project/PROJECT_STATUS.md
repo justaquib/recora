@@ -18,7 +18,7 @@ src/
   components/                     Shared UI components and setup modal
   features/recording/              Dedicated setup/capture webview and event protocol
   pages/                           Dashboard, library, and video detail pages
-  services/                        IndexedDB and native file persistence
+  services/                        IndexedDB metadata and native file persistence
   shared/                          Shared domain types
   utils/                           Formatting and error helpers
   widgets/                         Floating controls, camera, and annotation UI
@@ -36,13 +36,15 @@ The query parameter `?widget=...` selects which Tauri webview is mounted. The da
 - Added live microphone mute control to the floating recording bar.
 - Added a recorder-bar camera-bubble toggle. Hiding the bubble disables its camera stream; showing it again displays the avatar until the camera is explicitly enabled.
 - Replaced live camera filter thumbnails with static avatar previews to avoid opening multiple camera renderers that flicker.
-- Added local IndexedDB library storage, native save/export, and delete behavior.
+- Added local library metadata in IndexedDB and on-disk media storage. New recordings write to the app-local `.temp` folder, merge/finalize on disk, then move into app-local `recordings` and copy to the configured save folder. On success, the `.temp` recording and merged native segments are removed. On failure, recovery files remain in `.temp`. Existing IndexedDB video blobs migrate to disk when the library loads.
+- Persisted floating widget positions in the shared IndexedDB settings store for restoration across app restarts.
+- Added monitor work-area checks for the expanded camera settings panel and serialized camera-bubble show/hide operations.
 - Added a native macOS ScreenCaptureKit path for screen/window selection and frame capture, with direct MP4 recording output on macOS 15+. This replaces WebView display capture after repeated diagnostics showed live but muted tracks and zero encoded bytes.
 - Added native pause/resume timing, finalization, file import, and native frame snapshots for screen annotations.
 - Kept camera-only capture on the WebView MediaRecorder path.
 - Split the former monolithic `App.tsx` into app entry, pages, widgets, shared types, storage service, feature event protocol, reusable UI components, and formatting utilities.
 - Moved recording setup and capture ownership into its own Tauri webview; the main window now manages the library, save folder, and launch action.
-- Added one save-folder preference in the main window. Folder choice is explicit; every recording is saved automatically there, or to `~/Movies/Recora` by default. Stop no longer opens a file picker.
+- Added one save-folder preference in the main window. Folder choice is explicit; every recording is saved automatically there, or to `~/Documents/Recora` by default. The folder is created automatically if it does not exist. Stop no longer opens a file picker.
 - Added an `isRecording` local state guard so the dashboard cannot launch a second setup session during an active recording.
 - Frontend production build passes with `npm run build`.
 
@@ -66,13 +68,11 @@ Frontend/Rust/Swift compilation validate code shape only. They do not validate m
 
 ## Current validation
 
-- `swiftc -swift-version 5 -typecheck`: passed for the native ScreenCaptureKit bridge (with Sendable and newer-SDK deprecation warnings).
-- `cargo check` from `src-tauri/`: passed with direct ScreenCaptureKit output and live microphone control.
-- `cargo run --no-default-features --color always --`: launched successfully with the current native recorder; the debug executable no longer depends on the missing `libswift_Concurrency.dylib`.
-- `npm run build`: passed with the camera settings, integrated home button, and microphone control UI.
-- `npm run tauri -- build --bundles app --no-sign`: passed with the finalization verification and floating camera controls; rebuilt `src-tauri/target/release/bundle/macos/Recora.app`.
+- `npm run build`: passed with disk-backed media files, metadata-only library persistence, and the latest widget changes.
+- `cargo check --offline` from `src-tauri/`: passed with app-local staging, file migration, and save-folder copy commands.
+- `npm run tauri -- build --bundles app --no-sign`: passed with the storage and widget changes; rebuilt `src-tauri/target/release/bundle/macos/Recora.app`.
 - `swiftc -module-cache-path /private/tmp/recora-swift-cache-check -swift-version 5 -typecheck src-tauri/src/native_recorder.swift`: passed after callback fallback and duration guard (existing concurrency and deprecation warnings remain).
-- Live stop/minimize/automatic-save/playback acceptance: not run in this environment. Specifically verify the native stream stays active for a 2-minute capture, duration mismatch recovery, pause/resume segment joins, bubble hide turns camera off, and static filter previews do not flicker.
+- Live capture, long-duration playback, pause/resume, auto-save, widget edge placement, and restart position restoration: not run in this environment.
 
 ## Next work
 
@@ -88,6 +88,6 @@ Frontend/Rust/Swift compilation validate code shape only. They do not validate m
 - Keep page components focused on page composition; put recording lifecycle and library operations in their feature/service modules.
 - Keep Tauri window/event APIs at the desktop boundary. Do not make UI components own unrelated capture, persistence, or export responsibilities.
 - Keep cross-webview messages typed and centralized. A UI timer is not proof that encoded media is being produced.
-- Persist the recording blob locally before writing the configured folder so a filesystem error cannot erase a completed capture.
+- Persist media chunks in the app-local temporary file during capture; never store recording bytes in IndexedDB.
 - Preserve the mandatory palette and typography rules in `DESIGN_SYSTEM.md` for all new and modified UI.
 - Update this status document whenever “Completed,” “Known issues,” or “Next work” changes.
