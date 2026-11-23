@@ -199,5 +199,5 @@
 .controls-widget .close-widget-button { margin-left: 2px; border: 1px solid rgba(242, 242, 242, .12); color: rgba(242, 242, 242, .58); }
 .controls-widget .close-widget-button:hover { background: rgba(224, 26, 79, .16); color: #E01A4F; }
 .widget-preparing-state { width: 100%; display: flex; align-items: center; gap: 11px; }
-.preparing-spinner { width: 17px; height: 17px; border: 2px solid rgba(242, 242, 242, .16); border-top-color: #4C8DF1; border-radius: 50%; animation: recora-save-spin .8s linear infinite; }
+.preparing-spinner { width: 17px; height: 17px; border: 2px solid rgba(242, 242, 242, .16); border-top-color: #4C8DF1; border-radius: 50%; animation: recodex-save-spin .8s linear infinite; }
 @keyframes widget-rec-pulse { 50% { box-shadow: 0 0 0 6px rgba(224, 26, 79, .08); } }

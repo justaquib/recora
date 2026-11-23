@@ -24,8 +24,8 @@ export default function RecordingIssueModal({ message, onDismiss }: { message: s
       <h2 id="recording-issue-title">{finalizationTimeout ? "Could not finish the recording" : "Recording issue"}</h2>
       <p id="recording-issue-description">
         {finalizationTimeout
-          ? "ScreenCaptureKit did not confirm that the MP4 was finalized within 30 seconds. Recora kept the recovery file so the captured video is not discarded."
-          : "Recora could not complete this recording. Review the details below; any recovery file has been kept on this device."}
+          ? "ScreenCaptureKit did not confirm that the MP4 was finalized within 30 seconds. Recodex kept the recovery file so the captured video is not discarded."
+          : "Recodex could not complete this recording. Review the details below; any recovery file has been kept on this device."}
       </p>
 
       {recoveryPath && <div className="recording-recovery-location">

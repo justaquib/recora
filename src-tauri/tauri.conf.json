@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Recora",
+  "productName": "Recodex",
   "version": "0.1.0",
-  "identifier": "com.justaquib.recora",
+  "identifier": "com.justaquib.recodex",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Recora",
+        "title": "Recodex",
         "width": 1200,
         "height": 820,
         "minWidth": 800,
@@ -22,7 +22,7 @@
       },
       {
         "label": "camera-bubble",
-        "title": "Recora Camera",
+        "title": "Recodex Camera",
         "url": "/?widget=camera",
         "width": 240,
         "height": 260,
@@ -38,7 +38,7 @@
       },
       {
         "label": "recording-controls",
-        "title": "Recora Recording Controls",
+        "title": "Recodex Recording Controls",
         "url": "/?widget=controls",
         "width": 468,
         "height": 70,
@@ -55,7 +55,7 @@
       },
       {
         "label": "recording-countdown",
-        "title": "Recora Countdown",
+        "title": "Recodex Countdown",
         "url": "/?widget=countdown",
         "width": 240,
         "height": 220,
@@ -72,7 +72,7 @@
       },
       {
         "label": "recording-setup",
-        "title": "Recora Recorder Setup",
+        "title": "Recodex Recorder Setup",
         "url": "/?widget=setup",
         "width": 472,
         "height": 560,
@@ -87,7 +87,7 @@
       },
       {
         "label": "annotation-overlay",
-        "title": "Recora Annotations",
+        "title": "Recodex Annotations",
         "url": "/?widget=annotations",
         "width": 1440,
         "height": 900,

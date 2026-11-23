@@ -1,20 +1,20 @@
-# Recora Design System
+# Recodex Design System
 
-This document records the visual foundations and interaction patterns used by the Recora desktop app. Keep it in sync with `src/App.css` when changing the interface.
+This document records the visual foundations and interaction patterns used by the Recodex desktop app. Keep it in sync with `src/App.css` when changing the interface.
 
 ## Product feel
 
-Recora should feel calm, focused, and dependable. Use a light workspace for browsing and setup, with dark surfaces reserved for recording controls. Keep the next action easy to find, reduce visual noise, and use motion only to clarify a state change.
+Recodex should feel calm, focused, and dependable. Use a light workspace for browsing and setup, with dark surfaces reserved for recording controls. Keep the next action easy to find, reduce visual noise, and use motion only to clarify a state change.
 
 ## Mandatory color-palette rule
 
-**Every Recora UI surface, component, icon, status, and illustration MUST use this supplied palette. Do not introduce additional hues or gray values.** Use only these four base colors, or alpha variants built from those same RGB values. This is a product-wide requirement for future work, not a suggestion.
+**Every Recodex UI surface, component, icon, status, and illustration MUST use this supplied palette. Do not introduce additional hues or gray values.** Use only these four base colors, or alpha variants built from those same RGB values. This is a product-wide requirement for future work, not a suggestion.
 
 | Token | Value | Use |
 | --- | --- | --- |
 | `--ink` | `#1A1A1A` | Primary text, icons, and dark surfaces |
 | `--pink` | `#E01A4F` | Recording/live state and destructive emphasis |
-| `--accent` | `#4C8DF1` | Primary actions, links, focus, selection, and Recora mark |
+| `--accent` | `#4C8DF1` | Primary actions, links, focus, selection, and Recodex mark |
 | `--paper` | `#F2F2F2` | App background, cards, panels, and light surfaces |
 
 Use `rgba(26,26,26, alpha)` for muted text, borders, and shadows; use `rgba(76,141,241, alpha)` or `rgba(224,26,79, alpha)` for subtle accent fills. Alpha changes are allowed; changing the underlying RGB values or adding another hue is not. Keep the CSS custom properties in `src/App.css` as the source of truth and use those tokens instead of adding new hard-coded colors. This rule also applies to the favicon, native app icons, floating widgets, artwork, and any new screen.
@@ -43,7 +43,7 @@ ui-monospace, SFMono-Regular, monospace
 | --- | ---: | ---: | --- |
 | Page title | 27 px | 630 | Library heading |
 | Detail title | 23 px | 630 | Recording title |
-| Brand | 21 px | 680 | Recora wordmark |
+| Brand | 21 px | 680 | Recodex wordmark |
 | Dialog heading | 21 px | 620 | Recorder setup |
 | Section heading | 13 px | 620 | Library sections |
 | Body | 10–11 px | 400–550 | Descriptions and metadata |

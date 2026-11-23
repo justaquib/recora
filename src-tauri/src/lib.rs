@@ -1,20 +1,20 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
-    fn recora_capture_choose_source() -> *mut std::ffi::c_char;
-    fn recora_capture_start(path: *const std::ffi::c_char, microphone: i32) -> *mut std::ffi::c_char;
-    fn recora_capture_pause(paused: i32) -> *mut std::ffi::c_char;
-    fn recora_capture_set_microphone(enabled: i32) -> *mut std::ffi::c_char;
-    fn recora_capture_stop(expected_active_duration_seconds: f64) -> *mut std::ffi::c_char;
-    fn recora_capture_snapshot() -> *mut std::ffi::c_char;
-    fn recora_capture_free_error(value: *mut std::ffi::c_char);
+    fn recodex_capture_choose_source() -> *mut std::ffi::c_char;
+    fn recodex_capture_start(path: *const std::ffi::c_char, microphone: i32) -> *mut std::ffi::c_char;
+    fn recodex_capture_pause(paused: i32) -> *mut std::ffi::c_char;
+    fn recodex_capture_set_microphone(enabled: i32) -> *mut std::ffi::c_char;
+    fn recodex_capture_stop(expected_active_duration_seconds: f64) -> *mut std::ffi::c_char;
+    fn recodex_capture_snapshot() -> *mut std::ffi::c_char;
+    fn recodex_capture_free_error(value: *mut std::ffi::c_char);
 }
 
 #[cfg(target_os = "macos")]
 fn native_capture_result(value: *mut std::ffi::c_char) -> Result<(), String> {
     if value.is_null() { return Ok(()); }
     let message = unsafe { std::ffi::CStr::from_ptr(value) }.to_string_lossy().into_owned();
-    unsafe { recora_capture_free_error(value); }
+    unsafe { recodex_capture_free_error(value); }
     Err(message)
 }
 
@@ -23,7 +23,7 @@ async fn native_capture_choose_source() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         return tauri::async_runtime::spawn_blocking(|| unsafe {
-            native_capture_result(recora_capture_choose_source())
+            native_capture_result(recodex_capture_choose_source())
         }).await.map_err(|error| format!("Native capture picker failed: {error}"))?;
     }
     #[cfg(not(target_os = "macos"))]
@@ -36,7 +36,7 @@ async fn native_capture_start(path: String, microphone: bool) -> Result<(), Stri
     {
         let path = std::ffi::CString::new(path).map_err(|_| "Recording path contains an invalid character")?;
         return tauri::async_runtime::spawn_blocking(move || unsafe {
-            native_capture_result(recora_capture_start(path.as_ptr(), i32::from(microphone)))
+            native_capture_result(recodex_capture_start(path.as_ptr(), i32::from(microphone)))
         }).await.map_err(|error| format!("Native recorder failed to start: {error}"))?;
     }
     #[cfg(not(target_os = "macos"))]
@@ -48,7 +48,7 @@ async fn native_capture_pause(paused: bool) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         return tauri::async_runtime::spawn_blocking(move || unsafe {
-            native_capture_result(recora_capture_pause(i32::from(paused)))
+            native_capture_result(recodex_capture_pause(i32::from(paused)))
         }).await.map_err(|error| format!("Native recorder pause failed: {error}"))?;
     }
     #[cfg(not(target_os = "macos"))]
@@ -60,7 +60,7 @@ async fn native_capture_set_microphone(enabled: bool) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         return tauri::async_runtime::spawn_blocking(move || unsafe {
-            native_capture_result(recora_capture_set_microphone(i32::from(enabled)))
+            native_capture_result(recodex_capture_set_microphone(i32::from(enabled)))
         }).await.map_err(|error| format!("Native microphone control failed: {error}"))?;
     }
     #[cfg(not(target_os = "macos"))]
@@ -72,7 +72,7 @@ async fn native_capture_stop(expected_duration_seconds: f64) -> Result<(), Strin
     #[cfg(target_os = "macos")]
     {
         return tauri::async_runtime::spawn_blocking(move || unsafe {
-            native_capture_result(recora_capture_stop(expected_duration_seconds))
+            native_capture_result(recodex_capture_stop(expected_duration_seconds))
         }).await.map_err(|error| format!("Native recorder failed to stop: {error}"))?;
     }
     #[cfg(not(target_os = "macos"))]
@@ -83,10 +83,10 @@ async fn native_capture_stop(expected_duration_seconds: f64) -> Result<(), Strin
 fn native_capture_snapshot() -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
-        let value = unsafe { recora_capture_snapshot() };
+        let value = unsafe { recodex_capture_snapshot() };
         if value.is_null() { return Err("ScreenCaptureKit has not delivered an annotation frame yet.".into()); }
         let encoded = unsafe { std::ffi::CStr::from_ptr(value) }.to_string_lossy().into_owned();
-        unsafe { recora_capture_free_error(value); }
+        unsafe { recodex_capture_free_error(value); }
         return Ok(encoded);
     }
     #[cfg(not(target_os = "macos"))]
@@ -148,7 +148,7 @@ fn choose_recording_directory() -> Result<Option<String>, String> {
         use std::process::Command;
         let script = r#"on run argv
 try
-  set selectedFolder to choose folder with prompt "Choose where Recora recordings should be saved"
+  set selectedFolder to choose folder with prompt "Choose where Recodex recordings should be saved"
   return POSIX path of selectedFolder
 on error number -128
   return "CANCELLED"
@@ -182,7 +182,7 @@ fn create_recording_file(directory: Option<String>, suggested_name: String) -> R
         Some(path) => PathBuf::from(path),
         None => {
             let home = env::var_os("HOME").ok_or("Could not find the current user's home folder")?;
-            PathBuf::from(home).join("Documents").join("Recora")
+            PathBuf::from(home).join("Documents").join("Recodex")
         }
     };
     fs::create_dir_all(&base_directory).map_err(|error| format!("Could not create the recording folder: {error}"))?;
@@ -191,8 +191,8 @@ fn create_recording_file(directory: Option<String>, suggested_name: String) -> R
         .chars()
         .filter(|character| character.is_ascii_alphanumeric() || matches!(character, ' ' | '-' | '_' | '.'))
         .collect();
-    let file_name = if file_name.trim().is_empty() { "recora-recording.webm" } else { file_name.trim() };
-    let stem = std::path::Path::new(file_name).file_stem().and_then(|value| value.to_str()).unwrap_or("recora-recording");
+    let file_name = if file_name.trim().is_empty() { "recodex-recording.webm" } else { file_name.trim() };
+    let stem = std::path::Path::new(file_name).file_stem().and_then(|value| value.to_str()).unwrap_or("recodex-recording");
     let extension = std::path::Path::new(file_name).extension().and_then(|value| value.to_str()).unwrap_or("webm");
 
     for suffix in 0..10_000 {
@@ -211,8 +211,8 @@ fn safe_recording_name(suggested_name: &str) -> (String, String) {
     let file_name: String = suggested_name.chars()
         .filter(|character| character.is_ascii_alphanumeric() || matches!(character, ' ' | '-' | '_' | '.'))
         .collect();
-    let file_name = if file_name.trim().is_empty() { "recora-recording.webm" } else { file_name.trim() };
-    let stem = std::path::Path::new(file_name).file_stem().and_then(|value| value.to_str()).unwrap_or("recora-recording").to_string();
+    let file_name = if file_name.trim().is_empty() { "recodex-recording.webm" } else { file_name.trim() };
+    let stem = std::path::Path::new(file_name).file_stem().and_then(|value| value.to_str()).unwrap_or("recodex-recording").to_string();
     let extension = std::path::Path::new(file_name).extension().and_then(|value| value.to_str()).unwrap_or("webm").to_string();
     (stem, extension)
 }
@@ -236,17 +236,17 @@ fn unique_recording_path(directory: &std::path::Path, suggested_name: &str) -> R
 #[tauri::command]
 fn create_temporary_recording_file(app: tauri::AppHandle, suggested_name: String) -> Result<String, String> {
     use tauri::Manager;
-    let directory = app.path().app_local_data_dir().map_err(|error| format!("Could not locate Recora's local storage: {error}"))?.join(".temp");
+    let directory = app.path().app_local_data_dir().map_err(|error| format!("Could not locate Recodex's local storage: {error}"))?.join(".temp");
     unique_recording_path(&directory, &suggested_name).map(|path| path.to_string_lossy().into_owned())
 }
 
 fn ensure_temporary_recording_path(app: &tauri::AppHandle, path: &str) -> Result<std::path::PathBuf, String> {
     use tauri::Manager;
-    let temporary_directory = app.path().app_local_data_dir().map_err(|error| format!("Could not locate Recora's local storage: {error}"))?.join(".temp");
+    let temporary_directory = app.path().app_local_data_dir().map_err(|error| format!("Could not locate Recodex's local storage: {error}"))?.join(".temp");
     let canonical_directory = std::fs::canonicalize(&temporary_directory).map_err(|error| format!("Could not locate the temporary recording folder: {error}"))?;
     let recording_path = std::fs::canonicalize(path).map_err(|error| format!("Could not locate the temporary recording: {error}"))?;
     if !recording_path.starts_with(canonical_directory) {
-        return Err("The recording path is outside Recora's temporary storage.".into());
+        return Err("The recording path is outside Recodex's temporary storage.".into());
     }
     Ok(recording_path)
 }
@@ -265,7 +265,7 @@ fn finalize_temporary_recording_file(app: tauri::AppHandle, path: String, sugges
     use std::{fs, io};
     use tauri::Manager;
     let source = ensure_temporary_recording_path(&app, &path)?;
-    let destination_directory = app.path().app_local_data_dir().map_err(|error| format!("Could not locate Recora's local storage: {error}"))?.join("recordings");
+    let destination_directory = app.path().app_local_data_dir().map_err(|error| format!("Could not locate Recodex's local storage: {error}"))?.join("recordings");
     let destination = unique_recording_path(&destination_directory, &suggested_name)?;
     match fs::rename(&source, &destination) {
         Ok(()) => Ok(destination.to_string_lossy().into_owned()),
@@ -286,7 +286,7 @@ fn finalize_temporary_recording_file(app: tauri::AppHandle, path: String, sugges
 fn import_recording_file(app: tauri::AppHandle, source_path: String, suggested_name: String) -> Result<String, String> {
     use std::{fs, io};
     use tauri::Manager;
-    let library_directory = app.path().app_local_data_dir().map_err(|error| format!("Could not locate Recora's local storage: {error}"))?.join("recordings");
+    let library_directory = app.path().app_local_data_dir().map_err(|error| format!("Could not locate Recodex's local storage: {error}"))?.join("recordings");
     let canonical_library = fs::canonicalize(&library_directory).ok();
     let canonical_source = fs::canonicalize(&source_path).map_err(|error| format!("Could not locate the existing recording: {error}"))?;
     if canonical_library.as_ref().is_some_and(|directory| canonical_source.starts_with(directory)) {
@@ -314,7 +314,7 @@ fn copy_recording_file(source_path: String, directory: Option<String>, suggested
     let source = PathBuf::from(&source_path);
     let destination_directory = match directory.filter(|path| !path.trim().is_empty()) {
         Some(path) => PathBuf::from(path),
-        None => PathBuf::from(env::var_os("HOME").ok_or("Could not find the current user's home folder")?).join("Documents").join("Recora"),
+        None => PathBuf::from(env::var_os("HOME").ok_or("Could not find the current user's home folder")?).join("Documents").join("Recodex"),
     };
     let destination = unique_recording_path(&destination_directory, &suggested_name)?;
     let mut input = match fs::File::open(&source) {

@@ -1,12 +1,12 @@
-# Recora project status
+# Recodex project status
 
 Last updated: 2026-11-23
 
-This file is the working record for the Recora desktop app: current architecture, completed work, user-visible failures, and the next engineering steps. Update it whenever a feature ships, a blocker changes, or the implementation plan changes.
+This file is the working record for the Recodex desktop app: current architecture, completed work, user-visible failures, and the next engineering steps. Update it whenever a feature ships, a blocker changes, or the implementation plan changes.
 
 ## Product direction
 
-Recora is a local-first desktop screen and camera recorder built with Tauri, React, TypeScript, and Tailwind CSS. It has a recording setup flow, independent floating controls and camera bubble, and a library for playback and export.
+Recodex is a local-first desktop screen and camera recorder built with Tauri, React, TypeScript, and Tailwind CSS. It has a recording setup flow, independent floating controls and camera bubble, and a library for playback and export.
 
 The mandatory palette and typography rules are in [DESIGN_SYSTEM.md](../design/DESIGN_SYSTEM.md). Keep that document authoritative; any new view or widget must follow it.
 
@@ -56,7 +56,7 @@ The query parameter `?widget=...` selects which Tauri webview is mounted. The da
 - Kept camera-only capture on the WebView MediaRecorder path.
 - Split the former monolithic `App.tsx` into app entry, pages, widgets, shared types, storage service, feature event protocol, reusable UI components, and formatting utilities.
 - Moved recording setup and capture ownership into its own Tauri webview; the main window now manages the library, save folder, and launch action.
-- Added one save-folder preference in the main window. Folder choice is explicit; every recording is saved automatically there, or to `~/Documents/Recora` by default. The folder is created automatically if it does not exist. Stop no longer opens a file picker.
+- Added one save-folder preference in the main window. Folder choice is explicit; every recording is saved automatically there, or to `~/Documents/Recodex` by default. The folder is created automatically if it does not exist. Stop no longer opens a file picker.
 - Added an `isRecording` local state guard so the dashboard cannot launch a second setup session during an active recording.
 - Frontend production build passes with `npm run build`.
 
@@ -82,8 +82,8 @@ Frontend/Rust/Swift compilation validate code shape only. They do not validate m
 
 - `npm run build`: passed after the floating-widget lifecycle, microphone meter, timer, and setup backdrop changes.
 - `cargo check --offline` from `src-tauri/`: passed with app-local staging, file migration, and save-folder copy commands.
-- `npm run tauri -- build --bundles app --no-sign`: passed with the storage and widget changes; rebuilt `src-tauri/target/release/bundle/macos/Recora.app`.
-- `swiftc -module-cache-path /private/tmp/recora-swift-cache-check -swift-version 5 -typecheck src-tauri/src/native_recorder.swift`: passed after callback fallback and duration guard (existing concurrency and deprecation warnings remain).
+- `npm run tauri -- build --bundles app --no-sign`: passed with the storage and widget changes; rebuilt `src-tauri/target/release/bundle/macos/Recodex.app`.
+- `swiftc -module-cache-path /private/tmp/recodex-swift-cache-check -swift-version 5 -typecheck src-tauri/src/native_recorder.swift`: passed after callback fallback and duration guard (existing concurrency and deprecation warnings remain).
 - Live capture, long-duration playback, pause/resume, auto-save, microphone-meter accuracy, widget edge placement, and restart position restoration: not run in this environment.
 
 ## Next work

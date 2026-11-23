@@ -99,7 +99,7 @@ export default function RecordingSetupWindow() {
     if (muted.length) {
       const kind = muted.map((track) => track.kind).join(" and ");
       const privacyPane = kind.includes("audio") ? "Microphone" : deviceName === "Camera" ? "Camera" : "Screen Recording";
-      throw new Error(`${deviceName} ${kind} input is muted by macOS. Enable Recora under System Settings → Privacy & Security → ${privacyPane}, then fully quit and reopen Recora.`);
+      throw new Error(`${deviceName} ${kind} input is muted by macOS. Enable Recodex under System Settings → Privacy & Security → ${privacyPane}, then fully quit and reopen Recodex.`);
     }
   };
   const prepareCaptureHost = async () => {
@@ -141,14 +141,14 @@ export default function RecordingSetupWindow() {
       const currentElapsed = Math.floor((Date.now() - startTime.current - pausedTotal.current - activePause) / 1000);
       setElapsed(currentElapsed);
       const status: WidgetStatus = { active: true, ready: true, recording: true, preparing: false, paused, elapsed: currentElapsed, camera: captureMode === "screen" && cameraEnabled, microphone: micEnabled, microphoneAvailable: captureMode === "screen" || Boolean(micStream.current?.getAudioTracks().length), cameraDeviceId: cameraId, screen: captureMode === "screen", bubble: captureMode === "screen" && bubbleVisibleRef.current, bubbleRevision: bubbleRevision.current };
-      void Promise.all(["camera-bubble", "recording-controls"].map((label) => emitTo(label, "recora:widget-status", status))).catch(() => undefined);
+      void Promise.all(["camera-bubble", "recording-controls"].map((label) => emitTo(label, "recodex:widget-status", status))).catch(() => undefined);
     }, 1000);
     return () => window.clearInterval(timer);
   }, [recording, paused, captureMode, cameraEnabled, cameraId, micEnabled, bubbleVisible]);
   useEffect(() => {
     if (!recording) return;
     const status: WidgetStatus = { active: true, ready: true, recording: true, preparing: false, paused, elapsed, camera: captureMode === "screen" && cameraEnabled, microphone: micEnabled, microphoneAvailable: captureMode === "screen" || Boolean(micStream.current?.getAudioTracks().length), cameraDeviceId: cameraId, screen: captureMode === "screen", bubble: captureMode === "screen" && bubbleVisible, bubbleRevision: bubbleRevision.current };
-    void Promise.all(["camera-bubble", "recording-controls"].map((label) => emitTo(label, "recora:widget-status", status))).catch(() => undefined);
+    void Promise.all(["camera-bubble", "recording-controls"].map((label) => emitTo(label, "recodex:widget-status", status))).catch(() => undefined);
   }, [recording, paused, elapsed, captureMode, cameraEnabled, cameraId, micEnabled, bubbleVisible]);
   const showRecordingWidgets = async (showBubble: boolean, hasCamera: boolean, cameraDeviceId: string, microphoneEnabled: boolean, microphoneAvailable: boolean) => {
     bubbleVisibleRef.current = showBubble;
@@ -178,7 +178,7 @@ export default function RecordingSetupWindow() {
       const status: WidgetStatus = { active: true, ready: false, recording: false, preparing: true, paused: false, elapsed: 0, camera: hasCamera, microphone: microphoneEnabled, microphoneAvailable, cameraDeviceId, screen: showBubble || hasCamera, bubble: showBubble, bubbleRevision: bubbleRevision.current };
       // A newly shown WebView may still be starting; repeat the idempotent status event briefly.
       for (let attempt = 0; attempt < 5; attempt += 1) {
-        await Promise.all(["camera-bubble", "recording-controls", "annotation-overlay"].map((label) => emitTo(label, "recora:widget-status", status)));
+        await Promise.all(["camera-bubble", "recording-controls", "annotation-overlay"].map((label) => emitTo(label, "recodex:widget-status", status)));
         await new Promise((resolve) => window.setTimeout(resolve, 120));
       }
     } catch (cause) {
@@ -189,7 +189,7 @@ export default function RecordingSetupWindow() {
 
   const placeCountdownWidget = async () => {
     const widget = await WebviewWindow.getByLabel("recording-countdown");
-    if (!widget) throw new Error("The floating countdown window is unavailable. Restart Recora and try again.");
+    if (!widget) throw new Error("The floating countdown window is unavailable. Restart Recodex and try again.");
     const monitor = await primaryMonitor();
     const scale = monitor?.scaleFactor || 1;
     const left = (monitor?.position.x || 0) / scale;
@@ -212,7 +212,7 @@ export default function RecordingSetupWindow() {
       annotationSnapshotKey.current = null;
     }
     try {
-      await Promise.all(["camera-bubble", "recording-controls", "annotation-overlay"].map((label) => emitTo(label, "recora:widget-status", inactive)));
+      await Promise.all(["camera-bubble", "recording-controls", "annotation-overlay"].map((label) => emitTo(label, "recodex:widget-status", inactive)));
       for (const label of ["camera-bubble", "recording-controls", "recording-countdown", "annotation-overlay"]) {
         const widget = await WebviewWindow.getByLabel(label);
         await widget?.hide();
@@ -222,7 +222,7 @@ export default function RecordingSetupWindow() {
 
   const loadDevices = async () => {
     if (!navigator.mediaDevices?.getUserMedia || !navigator.mediaDevices?.enumerateDevices) {
-      setError("Recording is not available in this WebView. Update macOS and reopen Recora."); return;
+      setError("Recording is not available in this WebView. Update macOS and reopen Recodex."); return;
     }
     const devices = await navigator.mediaDevices.enumerateDevices();
     const mics = devices.filter((device) => device.kind === "audioinput").map((device, index) => ({ deviceId: device.deviceId, label: device.label || `Microphone ${index + 1}` }));
@@ -252,7 +252,7 @@ export default function RecordingSetupWindow() {
       meterTimer.current = window.setInterval(() => {
         analyser.getFloatTimeDomainData(samples);
         const rms = Math.sqrt(samples.reduce((sum, sample) => sum + sample * sample, 0) / samples.length);
-        void emitTo("recording-controls", "recora:widget-status", { microphoneLevel: Math.min(1, rms * 7) } satisfies Partial<WidgetStatus>);
+        void emitTo("recording-controls", "recodex:widget-status", { microphoneLevel: Math.min(1, rms * 7) } satisfies Partial<WidgetStatus>);
       }, 80);
     } catch (cause) { console.warn("Could not start the microphone level meter", cause); }
   };
@@ -263,7 +263,7 @@ export default function RecordingSetupWindow() {
       if (sizeBytes < 1024) throw new Error(`No usable media was encoded (${mimeType}, ${formatFileSize(sizeBytes)}). Check that the selected capture source is still active. Recovery file: ${temporaryPath}`);
       setRecording(false); setPaused(false);
       const savingStatus: WidgetStatus = { active: true, ready: false, recording: false, paused: false, elapsed: captureDuration, camera: false, saving: true, savingStage: "saving" };
-      await Promise.all(["camera-bubble", "recording-controls", "annotation-overlay"].map((label) => emitTo(label, "recora:widget-status", savingStatus)));
+      await Promise.all(["camera-bubble", "recording-controls", "annotation-overlay"].map((label) => emitTo(label, "recodex:widget-status", savingStatus)));
       const extension = mimeType.includes("mp4") ? "mp4" : "webm";
       const recordedDuration = mediaDuration ?? captureDuration;
       const incomplete = mediaDuration !== null && captureDuration - mediaDuration > 3;
@@ -272,7 +272,7 @@ export default function RecordingSetupWindow() {
       }
       setSavingFile(true);
       const video: VideoItem = { id: crypto.randomUUID(), title: `Untitled recording ${new Date().toLocaleDateString()}`, createdAt: Date.now(), duration: recordedDuration, captureDuration, sizeBytes, thumbnail: "", mimeType, hasCamera: captureOptions.current.captureMode === "camera" || (captureOptions.current.captureMode === "screen" && captureOptions.current.cameraEnabled) };
-      const suggestedName = `${video.title.replace(/[^a-z0-9-_ ]/gi, "").trim() || "recora-recording"}.${extension}`;
+      const suggestedName = `${video.title.replace(/[^a-z0-9-_ ]/gi, "").trim() || "recodex-recording"}.${extension}`;
       const filePath = await finalizeTemporaryRecordingFile(temporaryPath, suggestedName);
       const filePaths = [filePath];
       let externalSaveError = "";
@@ -281,9 +281,9 @@ export default function RecordingSetupWindow() {
       const savedVideo = { ...video, filePath, filePaths };
       await putVideo(savedVideo);
       saved = true;
-      setNotice(externalSaveError ? `Saved in Recora. Could not copy to the selected folder: ${externalSaveError}` : `Saved ${extension.toUpperCase()} recording${saveDirectory.current ? " to your chosen location" : " to Documents/Recora"}`);
+      setNotice(externalSaveError ? `Saved in Recodex. Could not copy to the selected folder: ${externalSaveError}` : `Saved ${extension.toUpperCase()} recording${saveDirectory.current ? " to your chosen location" : " to Documents/Recodex"}`);
       const idleStatus: WidgetStatus = { active: true, ready: false, recording: false, paused: false, elapsed: 0, camera: false, microphone: false, microphoneAvailable: false, cameraDeviceId: cameraId, screen: captureOptions.current.captureMode === "screen", bubble: captureOptions.current.captureMode === "screen" && bubbleVisibleRef.current, bubbleRevision: bubbleRevision.current, saving: false };
-      await Promise.all(["camera-bubble", "recording-controls"].map((label) => emitTo(label, "recora:widget-status", idleStatus)));
+      await Promise.all(["camera-bubble", "recording-controls"].map((label) => emitTo(label, "recodex:widget-status", idleStatus)));
       void emitTo("main", recordingEvents.libraryChanged, { id: video.id }).catch((cause) => console.warn("Could not refresh the library after saving", cause));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The recording could not be finalized.");
@@ -310,12 +310,12 @@ export default function RecordingSetupWindow() {
       let videoSource: MediaStream | null = null;
       if (captureMode === "screen") {
         const screenPermission = await invoke<boolean>("request_screen_capture_permission");
-        if (!screenPermission) throw new Error("macOS Screen Recording access is not enabled for Recora. Enable it under System Settings → Privacy & Security → Screen Recording, then fully quit and reopen Recora.");
+        if (!screenPermission) throw new Error("macOS Screen Recording access is not enabled for Recodex. Enable it under System Settings → Privacy & Security → Screen Recording, then fully quit and reopen Recodex.");
         if (micEnabled) {
           micStream.current = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: micId ? { exact: micId } : undefined, echoCancellation: true, noiseSuppression: true }, video: false });
           await waitForUnmutedTracks(micStream.current, "Microphone");
         }
-        nativePath = await createTemporaryRecordingFile(`Recora recording ${Date.now()}.mp4`);
+        nativePath = await createTemporaryRecordingFile(`Recodex recording ${Date.now()}.mp4`);
         try {
           await invoke("native_capture_choose_source");
         } catch (cause) {
@@ -385,7 +385,7 @@ export default function RecordingSetupWindow() {
       mediaRecorder.current = recorder;
       recorderMimeType.current = recorder.mimeType || mimeType || "video/webm";
       const extension = recorderMimeType.current.includes("mp4") ? "mp4" : "webm";
-      const temporaryPath = await createTemporaryRecordingFile(`Recora recording ${Date.now()}.${extension}`);
+      const temporaryPath = await createTemporaryRecordingFile(`Recodex recording ${Date.now()}.${extension}`);
       recordingWriteQueue.current = Promise.resolve();
       recordingWriteError.current = "";
       let dataEvents = 0;
@@ -449,7 +449,7 @@ export default function RecordingSetupWindow() {
     const activePause = pausedRef.current ? Date.now() - pauseStarted.current : 0;
     latestElapsed.current = Math.floor((Date.now() - startTime.current - pausedTotal.current - activePause) / 1000);
     const finalizingStatus: WidgetStatus = { active: true, ready: false, paused: false, elapsed: latestElapsed.current, camera: false, saving: true, savingStage: "finalizing" };
-    void Promise.all(["camera-bubble", "recording-controls", "annotation-overlay"].map((label) => emitTo(label, "recora:widget-status", finalizingStatus)));
+    void Promise.all(["camera-bubble", "recording-controls", "annotation-overlay"].map((label) => emitTo(label, "recodex:widget-status", finalizingStatus)));
     if (nativeRecordingPath.current) {
       const nativePath = nativeRecordingPath.current;
       void (async () => {
@@ -460,7 +460,7 @@ export default function RecordingSetupWindow() {
         } catch (cause) {
           const detail = friendlyError(cause);
           console.error("Native recording finalization failed", { path: nativePath, error: cause });
-          setError(`${detail} Recovery files remain in Recora's app-local .temp folder.`);
+          setError(`${detail} Recovery files remain in Recodex's app-local .temp folder.`);
           await writeSetting("isRecording", false).catch(() => undefined);
           await hideRecordingWidgets();
           nativeRecordingPath.current = null; recordingSession.current = ""; stopRequested.current = false;
@@ -504,7 +504,7 @@ export default function RecordingSetupWindow() {
     else { pausedTotal.current += Date.now() - pauseStarted.current; pausedRef.current = false; setPaused(false); }
     const activePause = pausedRef.current ? Date.now() - pauseStarted.current : 0;
     const currentElapsed = Math.floor((Date.now() - startTime.current - pausedTotal.current - activePause) / 1000);
-    void emitTo("recording-controls", "recora:widget-status", {
+    void emitTo("recording-controls", "recodex:widget-status", {
       active: true, ready: true, paused: pausedRef.current, elapsed: currentElapsed,
       camera: captureOptions.current.captureMode === "screen" && captureOptions.current.cameraEnabled,
       microphone: micEnabledRef.current,
@@ -567,7 +567,7 @@ export default function RecordingSetupWindow() {
     let unlistenAnnotation: (() => void) | undefined;
     let unlistenCameraSettings: (() => void) | undefined;
     let unlistenCountdownSkip: (() => void) | undefined;
-    void listen<{ action: "pause" | "stop" | "home" | "microphone" | "bubble" | "new" | "close" }>("recora:widget-action", async (event) => {
+    void listen<{ action: "pause" | "stop" | "home" | "microphone" | "bubble" | "new" | "close" }>("recodex:widget-action", async (event) => {
       if (event.payload.action === "pause") togglePause();
       if (event.payload.action === "stop") stopRecording();
       if (event.payload.action === "microphone") void toggleMicrophone().catch((cause) => setNotice(friendlyError(cause)));
@@ -593,7 +593,7 @@ export default function RecordingSetupWindow() {
           bubble: visible,
           bubbleRevision: bubbleRevision.current,
         };
-        await Promise.all(["camera-bubble", "recording-controls"].map((label) => emitTo(label, "recora:widget-status", status))).catch(() => undefined);
+        await Promise.all(["camera-bubble", "recording-controls"].map((label) => emitTo(label, "recodex:widget-status", status))).catch(() => undefined);
         const cameraWindow = await WebviewWindow.getByLabel("camera-bubble");
         if (visible) await cameraWindow?.show().catch(() => undefined);
         else await cameraWindow?.hide().catch(() => undefined);
@@ -611,14 +611,14 @@ export default function RecordingSetupWindow() {
         await main?.unminimize(); await main?.show(); await main?.setFocus();
       }
     }).then((stop) => { unlisten = stop; }).catch((cause) => console.warn("Could not listen for widget actions", cause));
-    void listen<{ label: string; x: number; y: number }>("recora:widget-moved", (event) => {
+    void listen<{ label: string; x: number; y: number }>("recodex:widget-moved", (event) => {
       if (positionWriteTimer !== null) window.clearTimeout(positionWriteTimer);
       positionWriteTimer = window.setTimeout(() => {
         void writeSetting(`widgetPosition:${event.payload.label}`, { x: event.payload.x, y: event.payload.y }).catch((cause) => console.warn("Could not save floating widget position", cause));
         positionWriteTimer = null;
       }, 180);
     }).then((stop) => { unlistenPosition = stop; }).catch((cause) => console.warn("Could not persist floating widget position", cause));
-    void listen<{ camera?: boolean; cameraDeviceId?: string }>("recora:camera-settings", (event) => {
+    void listen<{ camera?: boolean; cameraDeviceId?: string }>("recodex:camera-settings", (event) => {
       if (event.payload.camera !== undefined) {
         captureOptions.current = { ...captureOptions.current, cameraEnabled: event.payload.camera };
         setCameraEnabled(event.payload.camera);
@@ -627,14 +627,14 @@ export default function RecordingSetupWindow() {
     }).then((stop) => { unlistenCameraSettings = stop; }).catch((cause) => console.warn("Could not listen for camera settings", cause));
     void listen<Record<string, never>>(recordingEvents.countdownSkip, () => skipCountdown())
       .then((stop) => { unlistenCountdownSkip = stop; }).catch((cause) => console.warn("Could not listen for countdown skip", cause));
-    void listen<{ tool: AnnotationTool }>("recora:annotation-request", async (event) => {
+    void listen<{ tool: AnnotationTool }>("recodex:annotation-request", async (event) => {
       const tool = event.payload.tool;
       if (tool === "cursor" || tool === "off") {
         if (annotationSnapshotKey.current) {
           try { localStorage.removeItem(annotationSnapshotKey.current); } catch { /* optional snapshot cleanup */ }
           annotationSnapshotKey.current = null;
         }
-        await emitTo("annotation-overlay", "recora:annotation-tool", { tool: "off" }).catch(() => undefined);
+        await emitTo("annotation-overlay", "recodex:annotation-tool", { tool: "off" }).catch(() => undefined);
         return;
       }
       try {
@@ -642,11 +642,11 @@ export default function RecordingSetupWindow() {
         if (annotationSnapshotKey.current) {
           try { localStorage.removeItem(annotationSnapshotKey.current); } catch { /* replace the previous snapshot */ }
         }
-        const snapshotKey = `recora-annotation-${crypto.randomUUID()}`;
+        const snapshotKey = `recodex-annotation-${crypto.randomUUID()}`;
         localStorage.setItem(snapshotKey, snapshot);
         annotationSnapshotKey.current = snapshotKey;
         for (let attempt = 0; attempt < 5; attempt += 1) {
-          await emitTo("annotation-overlay", "recora:annotation-tool", { tool, snapshotKey }).catch(() => undefined);
+          await emitTo("annotation-overlay", "recodex:annotation-tool", { tool, snapshotKey }).catch(() => undefined);
           await new Promise((resolve) => window.setTimeout(resolve, 80));
         }
       } catch (cause) {

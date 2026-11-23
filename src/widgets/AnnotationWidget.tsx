@@ -35,7 +35,7 @@ export default function AnnotationWidget() {
       toolQueue.current = toolQueue.current.catch(() => undefined).then(async () => {
         if (revision !== toolRevision.current) return;
         setTool(next);
-        void emitTo("recording-controls", "recora:annotation-state", { tool: next === "off" ? "cursor" : next }).catch(() => undefined);
+        void emitTo("recording-controls", "recodex:annotation-state", { tool: next === "off" ? "cursor" : next }).catch(() => undefined);
         if (nextSnapshot) setSnapshot(nextSnapshot);
         if (next === "cursor" || next === "off") {
           await windowRef.current.hide().catch(() => undefined);
@@ -53,7 +53,7 @@ export default function AnnotationWidget() {
       });
       return toolQueue.current;
     };
-    void listen<{ tool: AnnotationTool; snapshot?: string; snapshotKey?: string }>("recora:annotation-tool", (event) => {
+    void listen<{ tool: AnnotationTool; snapshot?: string; snapshotKey?: string }>("recodex:annotation-tool", (event) => {
       let frame = event.payload.snapshot;
       if (!frame && event.payload.snapshotKey) {
         try { frame = localStorage.getItem(event.payload.snapshotKey) || undefined; } catch { /* continue with a transparent drawing surface */ }
@@ -61,7 +61,7 @@ export default function AnnotationWidget() {
       void applyTool(event.payload.tool, frame);
     })
       .then((stop) => { unlistenTool = stop; }).catch((cause) => console.warn("Could not listen for annotation tools", cause));
-    void listen<WidgetStatus>("recora:widget-status", (event) => {
+    void listen<WidgetStatus>("recodex:widget-status", (event) => {
       if (event.payload.active === false || event.payload.saving === true) void applyTool("off");
     }).then((stop) => { unlistenStatus = stop; }).catch((cause) => console.warn("Could not listen for recording status", cause));
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") void applyTool("off"); };
@@ -151,9 +151,9 @@ export default function AnnotationWidget() {
 
   const chooseTool = (next: AnnotationTool) => {
     if (next === "cursor") {
-      setTool("cursor"); void emitTo("recording-setup", "recora:annotation-request", { tool: "cursor" }).catch(() => undefined);
+      setTool("cursor"); void emitTo("recording-setup", "recodex:annotation-request", { tool: "cursor" }).catch(() => undefined);
     } else {
-      setTool(next); void emitTo("recording-controls", "recora:annotation-state", { tool: next }).catch(() => undefined);
+      setTool(next); void emitTo("recording-controls", "recodex:annotation-state", { tool: next }).catch(() => undefined);
     }
   };
   return <div className={`annotation-root ${active ? "is-active" : ""}`}>

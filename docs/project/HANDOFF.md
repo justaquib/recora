@@ -7,7 +7,7 @@ Last updated: 2026-11-23
 - Docs reorganized into `docs/{architecture,design,development,project,rules}`.
 - Agent instructions renamed from `CLAUDE.md` to `AGENTS.md` (universal).
 - The library stores metadata in IndexedDB and media files on disk. Capture stages chunks in app-local `.temp`, then moves successful recordings into app-local `recordings` and copies them to the configured folder. Failed finalization retains recovery files.
-- The default external save folder is `~/Documents/Recora`; native save/export creates it on demand.
+- The default external save folder is `~/Documents/Recodex`; native save/export creates it on demand.
 - Floating camera settings are clamped to monitor work areas; bubble visibility is explicitly applied to the camera window. Positions persist in the shared IndexedDB settings store; Zustand was not added because it would be local to each webview.
 - After successful stop/save, controls stay open in an idle state with a New recording action; the camera bubble remains visible with its camera off. The microphone level meter and glass timer are wired into the control widget, and the setup window uses a transparent backdrop.
 - The floating recorder has separate preparing, recording, saving, and idle layouts. Idle controls include a close action. Dashboard focus dismisses all floating windows, including countdown and annotation.

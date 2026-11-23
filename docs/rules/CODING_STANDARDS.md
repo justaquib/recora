@@ -31,4 +31,4 @@
 ## Naming
 
 - Files: PascalCase for components, camelCase for modules/utilities.
-- Types: PascalCase; events prefixed `recora:`.
+- Types: PascalCase; events prefixed `recodex:`.

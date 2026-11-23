@@ -57,7 +57,7 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
         } catch (cause) { console.warn(`Could not ${shouldShow ? "show" : "hide"} widget`, cause); }
       });
     };
-    void listen<WidgetStatus>("recora:widget-status", (event) => {
+    void listen<WidgetStatus>("recodex:widget-status", (event) => {
       const next = event.payload;
       if (typeof next.microphoneLevel === "number" && Object.keys(next).length === 1) {
         const level = Math.max(0, Math.min(1, next.microphoneLevel));
@@ -115,10 +115,10 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
           settingsBubbleCenterX.current = payload.x + Math.round(120 * scale) + settingsPositionOffsetX.current;
           settingsBubbleCenterY.current = payload.y + Math.round(106 * scale) + settingsPositionOffsetY.current;
         }
-        return emitTo("recording-setup", "recora:widget-moved", { label, x: payload.x + (kind === "camera" && settingsOpenRef.current ? settingsPositionOffsetX.current : 0), y: payload.y + (kind === "camera" && settingsOpenRef.current ? settingsPositionOffsetY.current : 0) });
+        return emitTo("recording-setup", "recodex:widget-moved", { label, x: payload.x + (kind === "camera" && settingsOpenRef.current ? settingsPositionOffsetX.current : 0), y: payload.y + (kind === "camera" && settingsOpenRef.current ? settingsPositionOffsetY.current : 0) });
       }).catch(() => undefined);
     }).then((stop) => { unlistenMoved = stop; }).catch((cause) => console.warn("Could not persist widget position", cause));
-    if (kind === "controls") void listen<{ tool: AnnotationTool }>("recora:annotation-state", (event) => setActiveTool(event.payload.tool))
+    if (kind === "controls") void listen<{ tool: AnnotationTool }>("recodex:annotation-state", (event) => setActiveTool(event.payload.tool))
       .then((stop) => { unlistenAnnotation = stop; }).catch((cause) => console.warn("Could not sync annotation tools", cause));
     return () => {
       unlistenStatus?.(); unlistenMoved?.(); unlistenAnnotation?.();
@@ -144,7 +144,7 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
       const next = { ...statusRef.current, camera: false };
       statusRef.current = next;
       setStatus(next);
-      void emitTo("recording-setup", "recora:camera-settings", { camera: false }).catch(() => undefined);
+      void emitTo("recording-setup", "recodex:camera-settings", { camera: false }).catch(() => undefined);
     });
     return () => {
       cancelled = true;
@@ -174,7 +174,7 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
       statusRef.current = next;
       setStatus(next);
     }
-    void emitTo("recording-setup", "recora:widget-action", { action });
+    void emitTo("recording-setup", "recodex:widget-action", { action });
   };
   const [activeTool, setActiveTool] = useState<AnnotationTool>("cursor");
   const toggleAnnotation = async (tool: AnnotationTool) => {
@@ -182,10 +182,10 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
     const nextTool: AnnotationTool = tool === "cursor" || activeTool === tool ? "cursor" : tool;
     setActiveTool(nextTool);
     try {
-      if (nextTool === "cursor") await emitTo("recording-setup", "recora:annotation-request", { tool: nextTool });
+      if (nextTool === "cursor") await emitTo("recording-setup", "recodex:annotation-request", { tool: nextTool });
       else {
-        await emitTo("annotation-overlay", "recora:annotation-tool", { tool: nextTool }).catch(() => undefined);
-        await emitTo("recording-setup", "recora:annotation-request", { tool: nextTool });
+        await emitTo("annotation-overlay", "recodex:annotation-tool", { tool: nextTool }).catch(() => undefined);
+        await emitTo("recording-setup", "recodex:annotation-request", { tool: nextTool });
       }
     } catch (cause) { console.warn("Could not activate annotation tool", cause); }
   };
@@ -199,7 +199,7 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
     setStatus(next);
     const { camera, cameraDeviceId } = patch;
     if (camera !== undefined || cameraDeviceId !== undefined) {
-      void emitTo("recording-setup", "recora:camera-settings", { camera, cameraDeviceId });
+      void emitTo("recording-setup", "recodex:camera-settings", { camera, cameraDeviceId });
     }
   };
   const toggleSettings = async () => {
@@ -319,7 +319,7 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
         <button className={`widget-control microphone-widget ${status.microphone ? "" : "is-muted"}`} disabled={!status.ready || !status.microphoneAvailable} onClick={() => sendAction("microphone")} aria-label={status.microphone ? "Mute microphone" : "Unmute microphone"} title={status.microphone ? "Mute microphone" : status.microphoneAvailable ? "Unmute microphone" : "Microphone was unavailable when recording started"}><Icon name={status.microphone ? "mic" : "micOff"} size={16} />{status.microphone && <span className="audio-level-bars" ref={audioBars} aria-hidden="true">{[0.45, 0.72, 1, 0.65, 0.38].map((_, index) => <i key={index} style={{ transform: "scaleY(.2)" }} />)}</span>}</button>
         <button className={`widget-control camera-bubble-toggle ${status.bubble ? "selected" : ""}`} onClick={() => sendAction("bubble")} aria-label={status.bubble ? "Hide camera bubble and turn off camera" : "Show camera bubble"} title={status.bubble ? "Hide camera bubble and turn off camera" : "Show camera bubble"}><Icon name={status.bubble ? "camera" : "cameraOff"} size={16} /></button>
         <button className={`widget-control tool-widget annotate-toggle ${activeTool !== "cursor" ? "selected" : ""}`} disabled={!status.screen} onClick={() => void toggleAnnotation(activeTool === "cursor" ? "pen" : "cursor")} aria-label={activeTool === "cursor" ? "Open annotation tools" : "Return to cursor mode"} title={activeTool === "cursor" ? "Annotate" : "Cursor mode"}><Icon name="pen" size={16} /></button>
-        <button className="widget-control home-widget-button" onClick={() => sendAction("home")} aria-label="Open Recora library" title="Open Recora library"><Icon name="home" size={17} /></button>
+        <button className="widget-control home-widget-button" onClick={() => sendAction("home")} aria-label="Open Recodex library" title="Open Recodex library"><Icon name="home" size={17} /></button>
         <button className="widget-control stop-widget" disabled={!status.ready} onClick={() => sendAction("stop")} aria-label="Stop recording" title="Stop recording"><Icon name="stop" size={14} /></button>
       </> : <>
         <span className="widget-drag-grip" aria-hidden="true">⠿</span>
@@ -327,7 +327,7 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
         <button className="widget-start-recording" onClick={() => sendAction("new")}><Icon name="plus" size={15} /> New recording</button>
         {status.screen && <span className="widget-divider" />}
         {status.screen && <button className={`widget-control camera-bubble-toggle ${status.bubble ? "selected" : ""}`} onClick={() => sendAction("bubble")} aria-label={status.bubble ? "Hide camera bubble and turn off camera" : "Show camera bubble"} title={status.bubble ? "Hide camera bubble and turn off camera" : "Show camera bubble"}><Icon name={status.bubble ? "camera" : "cameraOff"} size={16} /></button>}
-        <button className="widget-control home-widget-button" onClick={() => sendAction("home")} aria-label="Open Recora dashboard" title="Open Recora dashboard"><Icon name="home" size={17} /></button>
+        <button className="widget-control home-widget-button" onClick={() => sendAction("home")} aria-label="Open Recodex dashboard" title="Open Recodex dashboard"><Icon name="home" size={17} /></button>
         <button className="widget-control close-widget-button" onClick={() => sendAction("close")} aria-label="Close floating widgets" title="Close floating widgets"><Icon name="close" size={15} /></button>
       </>}
     </div>

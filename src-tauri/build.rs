@@ -16,7 +16,7 @@ fn main() {
         other => panic!("Unsupported macOS architecture for native screen capture: {other}"),
     };
     let target = format!("{swift_arch}-apple-macosx14.0");
-    let archive = out_dir.join("librecora_native_capture.a");
+    let archive = out_dir.join("librecodex_native_capture.a");
     let cache = out_dir.join("swift-module-cache");
     std::fs::create_dir_all(&cache).expect("create Swift module cache");
 
@@ -30,11 +30,11 @@ fn main() {
             "-o", archive.to_str().expect("UTF-8 archive path"),
         ])
         .status()
-        .expect("Swift compiler is required to build Recora's macOS ScreenCaptureKit recorder");
+        .expect("Swift compiler is required to build Recodex's macOS ScreenCaptureKit recorder");
     assert!(status.success(), "Failed to compile native ScreenCaptureKit recorder");
 
     println!("cargo:rustc-link-search=native={}", out_dir.display());
-    println!("cargo:rustc-link-lib=static=recora_native_capture");
+    println!("cargo:rustc-link-lib=static=recodex_native_capture");
     for framework in ["AVFoundation", "ScreenCaptureKit", "CoreMedia", "CoreVideo", "Foundation", "AppKit"] {
         println!("cargo:rustc-link-lib=framework={framework}");
     }

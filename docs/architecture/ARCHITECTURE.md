@@ -1,8 +1,8 @@
-# Recora architecture
+# Recodex architecture
 
 ## Overview
 
-Recora is a Tauri desktop app: a React/TypeScript frontend rendered in multiple webviews, backed by a Rust/Tauri core and a native macOS ScreenCaptureKit recorder (Swift).
+Recodex is a Tauri desktop app: a React/TypeScript frontend rendered in multiple webviews, backed by a Rust/Tauri core and a native macOS ScreenCaptureKit recorder (Swift).
 
 ## Webview model
 
@@ -35,10 +35,10 @@ Tauri commands live in `src-tauri/src/lib.rs`. Screen capture on macOS is implem
 
 ## Data
 
-- IndexedDB (`recora-library`, v4): recording metadata and preferences only. Older records with media blobs migrate to disk on library load.
+- IndexedDB (`recodex-library`, v4): recording metadata and preferences only. Older records with media blobs migrate to disk on library load.
 - Recording media is written to the app-local `.temp` directory while capturing, merged/finalized on disk, then moved into the app-local `recordings` directory. Successful finalization removes the `.temp` file and native segment files; failed finalization keeps recovery files. A copy is placed in the configured save folder. The library stores file paths and metadata, never the media bytes.
 - Save folder preference is stored in `settings`.
-- When no folder is selected, the app copies finalized recordings to `~/Documents/Recora`, creating the directory when needed.
+- When no folder is selected, the app copies finalized recordings to `~/Documents/Recodex`, creating the directory when needed.
 
 ## Rules
 

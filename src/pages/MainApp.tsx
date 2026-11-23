@@ -1,47 +1,45 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, useParams } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "../App.css";
 import { Icon } from "../components/Icon";
+import Sidebar from "../components/Sidebar";
 import LibraryPage from "./LibraryPage";
 import RecordingDetailPage from "./RecordingDetailPage";
+import RecordingPage from "./RecordingPage";
+import SettingsPage from "./SettingsPage";
 import { recordingEvents } from "../features/recording/recordingEvents";
 import { copyRecordingFile, readRecordingBlob, readVideos, removeVideo, writeSetting, putVideo, readSetting } from "../services/recordingStorage";
 import type { VideoItem } from "../shared/types";
+import { useLibraryStore } from "../stores/useLibraryStore";
 
 /** Library and preferences only. Capture runs in the dedicated recorder webview. */
-export default function MainApp() {
-  const [videos, setVideos] = useState<VideoItem[]>([]);
-  const [selected, setSelected] = useState<VideoItem | null>(null);
-  const [query, setQuery] = useState("");
-  const [sortOrder, setSortOrder] = useState("newest");
-  const [view, setView] = useState<"grid" | "list">("grid");
-  const [saveDirectory, setSaveDirectory] = useState("");
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const [renaming, setRenaming] = useState(false);
-  const [draftTitle, setDraftTitle] = useState("");
-  const [confirmDelete, setConfirmDelete] = useState(false);
+function MainShell() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const store = useLibraryStore();
+  const { videos, setVideos, query, setQuery, sortOrder, setSortOrder, view, setView, saveDirectory, setSaveDirectory, error, setError, notice, setNotice, renaming, setRenaming, draftTitle, setDraftTitle, confirmDelete, setConfirmDelete } = store;
+
   const searchInput = useRef<HTMLInputElement>(null);
   const previewVideo = useRef<HTMLVideoElement>(null);
 
   const refresh = useCallback(async () => {
     try { setVideos(await readVideos()); }
     catch { setError("The local library could not be opened. Restart the app and try again."); }
-  }, []);
+  }, [setVideos, setError]);
 
   useEffect(() => {
     void refresh();
-    // A process restart means no in-memory capture session survived.
     void writeSetting("isRecording", false).catch(() => undefined);
     void readSetting<string>("saveDirectory").then((value) => setSaveDirectory(value || "")).catch(() => undefined);
     let unlistenLibrary: (() => void) | undefined;
     let unlistenFocus: (() => void) | undefined;
     const closeFloatingWindows = async () => {
       const inactive = { active: false, ready: false, recording: false, preparing: false, paused: false, elapsed: 0, camera: false, bubble: false, saving: false };
-      await Promise.all(["camera-bubble", "recording-controls", "annotation-overlay"].map((label) => emitTo(label, "recora:widget-status", inactive).catch(() => undefined)));
+      await Promise.all(["camera-bubble", "recording-controls", "annotation-overlay"].map((label) => emitTo(label, "recodex:widget-status", inactive).catch(() => undefined)));
       await emitTo("recording-countdown", recordingEvents.countdownState, { remaining: null }).catch(() => undefined);
       await Promise.all(["camera-bubble", "recording-controls", "recording-countdown", "annotation-overlay"].map(async (label) => {
         const widget = await WebviewWindow.getByLabel(label).catch(() => null);
@@ -54,13 +52,17 @@ export default function MainApp() {
     void listen<{ id: string }>(recordingEvents.libraryChanged, () => { void refresh(); })
       .then((stop) => { unlistenLibrary = stop; }).catch((cause) => console.warn("Could not listen for library updates", cause));
     return () => { unlistenLibrary?.(); unlistenFocus?.(); };
-  }, [refresh]);
+  }, [refresh, setSaveDirectory]);
 
   useEffect(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(""), 3400);
     return () => window.clearTimeout(timer);
-  }, [notice]);
+  }, [notice, setNotice]);
+
+  const isDetail = location.pathname.startsWith("/recordings/");
+  const detailId = isDetail ? location.pathname.split("/").pop() : null;
+  const selected = videos.find((video) => video.id === detailId) || null;
 
   useEffect(() => {
     if (!selected?.filePath || !previewVideo.current) return;
@@ -72,7 +74,7 @@ export default function MainApp() {
       previewVideo.current.src = url;
     }).catch((cause) => setError(cause instanceof Error ? `Could not open this recording. ${cause.message}` : "Could not open this recording."));
     return () => { cancelled = true; if (url) URL.revokeObjectURL(url); };
-  }, [selected]);
+  }, [selected, setError]);
 
   const filtered = useMemo(() => videos
     .filter((video) => video.title.toLowerCase().includes(query.toLowerCase()))
@@ -85,7 +87,7 @@ export default function MainApp() {
         return;
       }
       const recorder = await WebviewWindow.getByLabel("recording-setup");
-      if (!recorder) throw new Error("The recorder window is unavailable. Restart Recora and try again.");
+      if (!recorder) throw new Error("The recorder window is unavailable. Restart Recodex and try again.");
       await recorder.emit(recordingEvents.setupConfig, { saveDirectory });
       await recorder.show();
       await recorder.setFocus();
@@ -107,7 +109,7 @@ export default function MainApp() {
   const resetSaveDirectory = async () => {
     await writeSetting("saveDirectory", "");
     setSaveDirectory("");
-    setNotice("Recordings will save to Documents/Recora");
+    setNotice("Recordings will save to Documents/Recodex");
   };
 
   const updateTitle = async () => {
@@ -116,8 +118,7 @@ export default function MainApp() {
     if (!title) { setRenaming(false); return; }
     const updated = { ...selected, title };
     await putVideo(updated);
-    setSelected(updated);
-    setVideos((items) => items.map((item) => item.id === updated.id ? updated : item));
+    setVideos(videos.map((item) => item.id === updated.id ? updated : item));
     setRenaming(false);
   };
 
@@ -126,8 +127,10 @@ export default function MainApp() {
     try {
       for (const path of selected.filePaths || (selected.filePath ? [selected.filePath] : [])) await invoke("delete_recording_file", { path });
       await removeVideo(selected.id);
-      setVideos((items) => items.filter((item) => item.id !== selected.id));
-      setSelected(null); setConfirmDelete(false); setNotice("Recording deleted from this device");
+      setVideos(videos.filter((item) => item.id !== selected.id));
+      setConfirmDelete(false);
+      setNotice("Recording deleted from this device");
+      navigate("/");
     } catch { setError("Could not delete this recording. Please try again."); }
   };
 
@@ -135,30 +138,48 @@ export default function MainApp() {
     if (!selected) return;
     try {
       const extension = (selected.mimeType || "video/mp4").includes("mp4") ? "mp4" : "webm";
-      const filePath = await copyRecordingFile(selected.filePath || "", `${selected.title.replace(/[^a-z0-9-_ ]/gi, "").trim() || "recora-recording"}.${extension}`, saveDirectory || null);
+      const filePath = await copyRecordingFile(selected.filePath || "", `${selected.title.replace(/[^a-z0-9-_ ]/gi, "").trim() || "recodex-recording"}.${extension}`, saveDirectory || null);
       const updated = { ...selected, filePath: selected.filePath || filePath, filePaths: [...new Set([...(selected.filePaths || (selected.filePath ? [selected.filePath] : [])), filePath])] };
-      await putVideo(updated); setSelected(updated); setVideos((items) => items.map((item) => item.id === updated.id ? updated : item)); setNotice("Export saved to your save location");
+      await putVideo(updated);
+      setVideos(videos.map((item) => item.id === updated.id ? updated : item));
+      setNotice("Export saved to your save location");
     } catch (cause) { setError(cause instanceof Error ? `Export could not be saved. ${cause.message}` : "Export could not be saved."); }
   };
 
-  return <div className="app-shell">
-    <aside className="sidebar">
-      <button className="brand" onClick={() => setSelected(null)} aria-label="Recora home"><span className="brand-mark"><Icon name="logo" size={22} /></span><span>recora</span></button>
-      <button className="new-recording" onClick={() => void openRecorder()}><Icon name="plus" size={17} /> New recording <span className="shortcut">⌘ N</span></button>
-      <div className="nav-label">WORKSPACE</div>
-      <button className={`nav-item ${!selected ? "active" : ""}`} onClick={() => setSelected(null)}><Icon name="home" /> <span>My recordings</span><span className="nav-count">{videos.length}</span></button>
-      <div className="sidebar-bottom">
-        <section className="storage-card save-location-card"><div className="storage-top"><Icon name="folder" size={14} /><span>Save location</span></div><div className="save-location-path" title={saveDirectory || "~/Documents/Recora"}>{saveDirectory ? saveDirectory.split(/[\\/]/).filter(Boolean).slice(-2).join("/") : "Documents/Recora"}</div><div className="save-location-actions"><button onClick={() => void chooseSaveDirectory()}>Change</button>{saveDirectory && <button onClick={() => void resetSaveDirectory()}>Default</button>}</div></section>
-        <div className="storage-card"><div className="storage-top"><span className="storage-dot" /><span>Stored on this device</span></div><div className="storage-note">Your recordings stay private and local.</div></div>
-        <button className="profile"><span className="avatar">A</span><span className="profile-copy"><strong>Personal workspace</strong><small>Local library</small></span><Icon name="more" size={17} /></button>
-      </div>
-    </aside>
-    <main className="main-area">
-      <header className="topbar"><div className="breadcrumbs"><span>Workspace</span><span className="crumb-slash">/</span><strong>{selected ? "Recording" : "My recordings"}</strong></div><div className="top-actions"><span className="local-pill"><span /> Saved locally</span><button className="icon-button" aria-label="Settings" title="Settings" onClick={() => document.querySelector(".save-location-card")?.scrollIntoView({ behavior: "smooth", block: "nearest" })}><Icon name="settings" /></button><button className="avatar small" aria-label="Personal workspace">A</button></div></header>
-      {selected ? <RecordingDetailPage video={selected} previewVideo={previewVideo} renaming={renaming} draftTitle={draftTitle} onDraftTitleChange={setDraftTitle} onStartRename={() => { setDraftTitle(selected.title); setRenaming(true); }} onCancelRename={() => setRenaming(false)} onUpdateTitle={() => void updateTitle()} onExport={() => void exportSelected()} onDelete={() => setConfirmDelete(true)} onBack={() => setSelected(null)} /> : <LibraryPage videos={videos} filtered={filtered} query={query} onQueryChange={setQuery} searchInput={searchInput} sortOrder={sortOrder} onSortChange={setSortOrder} view={view} onViewChange={setView} onNewRecording={() => void openRecorder()} onOpenVideo={setSelected} />}
-    </main>
-    {confirmDelete && selected && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setConfirmDelete(false); }}><div className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-heading"><div className="delete-icon"><Icon name="trash" size={19} /></div><h2 id="delete-heading">Delete this recording?</h2><p><strong>{selected.title}</strong> and its saved video file will be deleted from this device. This cannot be undone.</p><div className="confirm-actions"><button className="button secondary" onClick={() => setConfirmDelete(false)}>Cancel</button><button className="button delete-confirm" onClick={() => void deleteSelected()}>Delete recording</button></div></div></div>}
-    {error && <div className="toast error-toast"><span>{error}</span><button onClick={() => setError("")} aria-label="Dismiss"><Icon name="close" size={16} /></button></div>}
-    {notice && <div className="toast"><span className="toast-check"><Icon name="check" size={13} /></span>{notice}</div>}
-  </div>;
+  const isRecordingPage = location.pathname === "/recording";
+  const headerTitle = isDetail ? "Recording" : isRecordingPage ? "Recording" : "My recordings";
+
+  return (
+    <div className="app-shell">
+      <Sidebar videoCount={videos.length} saveDirectory={saveDirectory} onNewRecording={() => void openRecorder()} onChooseSaveDirectory={() => void chooseSaveDirectory()} onResetSaveDirectory={() => void resetSaveDirectory()} />
+      <main className="main-area">
+        <header className="topbar"><div className="breadcrumbs"><span>Workspace</span><span className="crumb-slash">/</span><strong>{headerTitle}</strong></div><div className="top-actions"><span className="local-pill"><span /> Saved locally</span><button className="icon-button" aria-label="Settings" title="Settings" onClick={() => document.querySelector(".save-location-card")?.scrollIntoView({ behavior: "smooth", block: "nearest" })}><Icon name="settings" /></button><button className="avatar small" aria-label="Personal workspace">A</button></div></header>
+        <Routes>
+          <Route path="/" element={<LibraryPage videos={videos} filtered={filtered.slice(0, 3)} query={query} showToolbar={false} onQueryChange={setQuery} searchInput={searchInput} sortOrder={sortOrder} onSortChange={setSortOrder} view={view} onViewChange={setView} onNewRecording={() => void openRecorder()} onOpenVideo={(video) => navigate(`/recordings/${video.id}`)} />} />
+          <Route path="/recording" element={<RecordingPage videos={videos} filtered={filtered} query={query} onQueryChange={setQuery} searchInput={searchInput} sortOrder={sortOrder} onSortChange={setSortOrder} view={view} onViewChange={setView} onOpenVideo={(video) => navigate(`/recordings/${video.id}`)} />} />
+          <Route path="/recordings/:id" element={<RecordingDetailRoute videos={videos} previewVideo={previewVideo} renaming={renaming} draftTitle={draftTitle} onDraftTitleChange={setDraftTitle} onStartRename={() => { if (selected) { setDraftTitle(selected.title); setRenaming(true); } }} onCancelRename={() => setRenaming(false)} onUpdateTitle={() => void updateTitle()} onExport={() => void exportSelected()} onDelete={() => setConfirmDelete(true)} onBack={() => navigate("/")} />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </main>
+      {confirmDelete && selected && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setConfirmDelete(false); }}><div className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-heading"><div className="delete-icon"><Icon name="trash" size={19} /></div><h2 id="delete-heading">Delete this recording?</h2><p><strong>{selected.title}</strong> and its saved video file will be deleted from this device. This cannot be undone.</p><div className="confirm-actions"><button className="button secondary" onClick={() => setConfirmDelete(false)}>Cancel</button><button className="button delete-confirm" onClick={() => void deleteSelected()}>Delete recording</button></div></div></div>}
+      {error && <div className="toast error-toast"><span>{error}</span><button onClick={() => setError("")} aria-label="Dismiss"><Icon name="close" size={16} /></button></div>}
+      {notice && <div className="toast"><span className="toast-check"><Icon name="check" size={13} /></span>{notice}</div>}
+    </div>
+  );
+}
+
+function RecordingDetailRoute({ videos, previewVideo, renaming, draftTitle, onDraftTitleChange, onStartRename, onCancelRename, onUpdateTitle, onExport, onDelete, onBack }: any) {
+  const { id } = useParams();
+  const video = videos.find((item: VideoItem) => item.id === id);
+  if (!video) return <Navigate to="/" replace />;
+  return <RecordingDetailPage video={video} previewVideo={previewVideo} renaming={renaming} draftTitle={draftTitle} onDraftTitleChange={onDraftTitleChange} onStartRename={onStartRename} onCancelRename={onCancelRename} onUpdateTitle={onUpdateTitle} onExport={onExport} onDelete={onDelete} onBack={onBack} />;
+}
+
+export default function MainApp() {
+  return (
+    <BrowserRouter>
+      <MainShell />
+    </BrowserRouter>
+  );
 }
