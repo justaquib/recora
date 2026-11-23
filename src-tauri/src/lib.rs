@@ -4,7 +4,8 @@ unsafe extern "C" {
     fn recora_capture_choose_source() -> *mut std::ffi::c_char;
     fn recora_capture_start(path: *const std::ffi::c_char, microphone: i32) -> *mut std::ffi::c_char;
     fn recora_capture_pause(paused: i32) -> *mut std::ffi::c_char;
-    fn recora_capture_stop() -> *mut std::ffi::c_char;
+    fn recora_capture_set_microphone(enabled: i32) -> *mut std::ffi::c_char;
+    fn recora_capture_stop(expected_active_duration_seconds: f64) -> *mut std::ffi::c_char;
     fn recora_capture_snapshot() -> *mut std::ffi::c_char;
     fn recora_capture_free_error(value: *mut std::ffi::c_char);
 }
@@ -55,15 +56,27 @@ async fn native_capture_pause(paused: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn native_capture_stop() -> Result<(), String> {
+async fn native_capture_set_microphone(enabled: bool) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        return tauri::async_runtime::spawn_blocking(|| unsafe {
-            native_capture_result(recora_capture_stop())
+        return tauri::async_runtime::spawn_blocking(move || unsafe {
+            native_capture_result(recora_capture_set_microphone(i32::from(enabled)))
+        }).await.map_err(|error| format!("Native microphone control failed: {error}"))?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    { let _ = enabled; Err("Native microphone control is currently supported on macOS only.".into()) }
+}
+
+#[tauri::command]
+async fn native_capture_stop(expected_duration_seconds: f64) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        return tauri::async_runtime::spawn_blocking(move || unsafe {
+            native_capture_result(recora_capture_stop(expected_duration_seconds))
         }).await.map_err(|error| format!("Native recorder failed to stop: {error}"))?;
     }
     #[cfg(not(target_os = "macos"))]
-    { Err("Native ScreenCaptureKit recording is currently supported on macOS only.".into()) }
+    { let _ = expected_duration_seconds; Err("Native ScreenCaptureKit recording is currently supported on macOS only.".into()) }
 }
 
 #[tauri::command]
@@ -235,7 +248,7 @@ fn delete_recording_file(path: String) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet, native_capture_choose_source, native_capture_start, native_capture_pause, native_capture_stop, native_capture_snapshot, read_recording_file, request_screen_capture_permission, open_capture_privacy_settings, choose_recording_directory, create_recording_file, write_recording_chunk, delete_recording_file])
+        .invoke_handler(tauri::generate_handler![greet, native_capture_choose_source, native_capture_start, native_capture_pause, native_capture_set_microphone, native_capture_stop, native_capture_snapshot, read_recording_file, request_screen_capture_permission, open_capture_privacy_settings, choose_recording_directory, create_recording_file, write_recording_chunk, delete_recording_file])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

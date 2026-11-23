@@ -8,7 +8,7 @@ This file is the working record for the Recora desktop app: current architecture
 
 Recora is a local-first desktop screen and camera recorder built with Tauri, React, TypeScript, and Tailwind CSS. It has a recording setup flow, independent floating controls and camera bubble, and a library for playback and export.
 
-The mandatory palette and typography rules are in [DESIGN_SYSTEM.md](./DESIGN_SYSTEM.md). Keep that document authoritative; any new view or widget must follow it.
+The mandatory palette and typography rules are in [DESIGN_SYSTEM.md](../design/DESIGN_SYSTEM.md). Keep that document authoritative; any new view or widget must follow it.
 
 ## Current architecture
 
@@ -24,15 +24,20 @@ src/
   widgets/                         Floating controls, camera, and annotation UI
 ```
 
-The query parameter `?widget=...` selects which Tauri webview is mounted. The dashboard and recording setup are separate webviews with separate JavaScript runtimes. The main window owns library and save-location preferences; clicking New recording opens the dedicated `recording-setup` webview. On macOS, screen recording is captured natively by ScreenCaptureKit and encoded directly to MP4 by AVFoundation in `src-tauri/src/native_recorder.swift`. The system content picker chooses the display or window. The setup webview coordinates the native lifecycle and imports the finalized file into the library; floating controls send pause/stop commands to it. Camera-only capture remains on the WebView MediaRecorder path. React Router or Zustand would only manage state inside one webview unless a bridge is added, so they are not currently used for cross-window recording control. Recording lifecycle messages use `features/recording/recordingEvents.ts`.
+The query parameter `?widget=...` selects which Tauri webview is mounted. The dashboard and recording setup are separate webviews with separate JavaScript runtimes. The main window owns library and save-location preferences; clicking New recording opens the dedicated `recording-setup` webview. On macOS 15+, screen recording uses ScreenCaptureKit's direct MP4 recording output; macOS 14 uses the AVFoundation sample-writer fallback. The system content picker chooses the display or window. The setup webview coordinates native lifecycle and imports the finalized file into the library; floating controls include Home, pause, stop, microphone mute, camera-bubble visibility, and annotation. Hiding the camera bubble turns the camera off; showing it again leaves the camera off until enabled from the bubble. The camera bubble owns camera selection and visual settings, with static filter previews. Camera-only capture remains on the WebView MediaRecorder path. React Router or Zustand would only manage state inside one webview unless a bridge is added, so they are not currently used for cross-window recording control. Recording lifecycle messages use `features/recording/recordingEvents.ts`.
 
 ## Completed
 
 - Added the local recordings dashboard and recording detail page.
 - Added screen or camera capture setup, microphone and camera toggles, and a configurable countdown.
-- Added movable floating controls, camera bubble, home widget, and annotation overlay.
+- Added movable floating controls, camera bubble, and annotation overlay.
+- Added camera settings in the bubble: live camera selection, original/warm/monochrome preview filters, soft blur, avatar selection, camera on/off, and bubble resizing.
+- Moved Home into the floating recording controls and removed the separate home window.
+- Added live microphone mute control to the floating recording bar.
+- Added a recorder-bar camera-bubble toggle. Hiding the bubble disables its camera stream; showing it again displays the avatar until the camera is explicitly enabled.
+- Replaced live camera filter thumbnails with static avatar previews to avoid opening multiple camera renderers that flicker.
 - Added local IndexedDB library storage, native save/export, and delete behavior.
-- Added a native macOS ScreenCaptureKit path for screen/window selection and frame capture, with direct AVFoundation MP4 encoding. This replaces WebView display capture after repeated diagnostics showed live but muted tracks and zero encoded bytes.
+- Added a native macOS ScreenCaptureKit path for screen/window selection and frame capture, with direct MP4 recording output on macOS 15+. This replaces WebView display capture after repeated diagnostics showed live but muted tracks and zero encoded bytes.
 - Added native pause/resume timing, finalization, file import, and native frame snapshots for screen annotations.
 - Kept camera-only capture on the WebView MediaRecorder path.
 - Split the former monolithic `App.tsx` into app entry, pages, widgets, shared types, storage service, feature event protocol, reusable UI components, and formatting utilities.
@@ -49,7 +54,7 @@ The WebView screen recorder repeatedly produced a tiny MP4 header and no frames;
 
 The Swift bridge compiles and `cargo check` passes, but live ScreenCaptureKit behavior, file duration, audio, pause/resume, permissions, and stop/finalize are not yet confirmed in a real recording. Do not mark the zero-frame issue fixed until acceptance confirms a playable recording with expected duration and file size. A zero-frame stop returns an explicit native capture error. ScreenCaptureKit microphone capture requires macOS 15; screen capture and the system picker require macOS 14. On macOS 14, microphone must be off for screen capture.
 
-Latest report: ScreenCaptureKit delivered 27 video frames and 73 microphone samples, but AVAssetWriter failed finalization with `AVFoundationErrorDomain -11800`. macOS 15+ now uses Apple's `SCRecordingOutput` to write MP4 directly instead of manually appending/muxing the sample buffers. Pause/resume closes the current native segment and starts another; Stop joins segments without paused gaps. macOS 14 retains the AVAssetWriter fallback. The UI shows native errors and preserves recovery files. This new path compiles but still needs live capture acceptance before the failure is marked resolved.
+Latest reports: ScreenCaptureKit previously delivered 27 video frames and 73 microphone samples, but AVAssetWriter failed finalization with `AVFoundationErrorDomain -11800`. macOS 15+ uses Apple's `SCRecordingOutput` to write MP4 directly. Stop and pause wait briefly for the finish callback, then verify that the segment file is stable and readable. Stop also compares the measured video-track duration with the active recorder time before joining/importing it. If ScreenCaptureKit stops early or the video timeline is materially shorter, the incomplete video is not added to the library and its recovery segments are kept with diagnostic paths. macOS 14 retains the AVAssetWriter fallback. This duration guard compiles but still needs live capture acceptance before the capture failure is marked resolved.
 
 ### P1 — Camera bubble is not composited into screen videos
 
@@ -62,11 +67,12 @@ Frontend/Rust/Swift compilation validate code shape only. They do not validate m
 ## Current validation
 
 - `swiftc -swift-version 5 -typecheck`: passed for the native ScreenCaptureKit bridge (with Sendable and newer-SDK deprecation warnings).
-- `cargo check` from `src-tauri/`: passed with the native bridge integration.
+- `cargo check` from `src-tauri/`: passed with direct ScreenCaptureKit output and live microphone control.
 - `cargo run --no-default-features --color always --`: launched successfully with the current native recorder; the debug executable no longer depends on the missing `libswift_Concurrency.dylib`.
-- `npm run build`: passed with native capture orchestration and library import.
-- `npm run tauri -- build --bundles app --no-sign`: passed with direct ScreenCaptureKit MP4 output; rebuilt `src-tauri/target/release/bundle/macos/Recora.app`.
-- Live stop/minimize/automatic-save/playback acceptance: not run in this environment.
+- `npm run build`: passed with the camera settings, integrated home button, and microphone control UI.
+- `npm run tauri -- build --bundles app --no-sign`: passed with the finalization verification and floating camera controls; rebuilt `src-tauri/target/release/bundle/macos/Recora.app`.
+- `swiftc -module-cache-path /private/tmp/recora-swift-cache-check -swift-version 5 -typecheck src-tauri/src/native_recorder.swift`: passed after callback fallback and duration guard (existing concurrency and deprecation warnings remain).
+- Live stop/minimize/automatic-save/playback acceptance: not run in this environment. Specifically verify the native stream stays active for a 2-minute capture, duration mismatch recovery, pause/resume segment joins, bubble hide turns camera off, and static filter previews do not flicker.
 
 ## Next work
 

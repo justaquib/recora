@@ -7,6 +7,6 @@ export default function App() {
   const widget = new URLSearchParams(window.location.search).get("widget");
   if (widget === "setup") return <RecordingSetupWindow />;
   if (widget === "annotations") return <AnnotationWidget />;
-  if (widget === "camera" || widget === "controls" || widget === "home") return <FloatingWidget kind={widget} />;
+  if (widget === "camera" || widget === "controls") return <FloatingWidget kind={widget} />;
   return <MainApp />;
 }

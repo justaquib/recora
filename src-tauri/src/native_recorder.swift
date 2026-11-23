@@ -44,6 +44,7 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private var pickerObserver: CapturePickerObserver?
     private var selectedFilter: SCContentFilter?
     private var stream: SCStream?
+    private var streamConfiguration: SCStreamConfiguration?
     private var writer: AVAssetWriter?
     private var videoInput: AVAssetWriterInput?
     private var audioInput: AVAssetWriterInput?
@@ -51,6 +52,7 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private var recordingOutputDelegate: NSObject?
     private var recordingOutputFinished: DispatchSemaphore?
     private var recordingOutputError: String?
+    private var streamError: String?
     private var segmentURLs: [URL] = []
     private var usesNativeRecordingOutput = false
     private var outputURL: URL?
@@ -172,12 +174,14 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         try nativeStream.addStreamOutput(self, type: .screen, sampleHandlerQueue: sampleQueue)
         lock.lock()
         self.stream = nativeStream
+        self.streamConfiguration = config
         self.writer = assetWriter
         self.videoInput = video
         self.audioInput = audio
         self.activeRecordingOutput = recordingOutput
         self.recordingOutputFinished = recordingOutput.map { _ in DispatchSemaphore(value: 0) }
         self.recordingOutputError = nil
+        self.streamError = nil
         self.segmentURLs = newSegments
         self.usesNativeRecordingOutput = usesNativeOutput
         self.outputURL = url
@@ -203,6 +207,7 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             if let segment = newSegments.first { try? FileManager.default.removeItem(at: segment) }
             lock.lock()
             self.stream = nil
+            self.streamConfiguration = nil
             self.writer = nil
             self.videoInput = nil
             self.audioInput = nil
@@ -228,6 +233,7 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         }
         let nativeOutput = usesNativeRecordingOutput
         let activeOutputObject = activeRecordingOutput
+        let activeSegmentURL = segmentURLs.last
         let destination = outputURL
         let nextSegmentIndex = segmentURLs.count
         if nativeOutput && paused {
@@ -244,9 +250,14 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
                 lock.lock(); recordingOutputFinished = nil; lock.unlock()
                 throw error
             }
-            guard finished.wait(timeout: .now() + 30) == .success else {
+            guard let activeSegmentURL else {
+                throw NSError(domain: "RecoraCapture", code: 18, userInfo: [NSLocalizedDescriptionKey: "The active recording segment path is unavailable while pausing."])
+            }
+            do {
+                try waitForRecordingOutput(activeOutput, at: activeSegmentURL, callback: finished)
+            } catch {
                 lock.lock(); recordingOutputFinished = nil; lock.unlock()
-                throw NSError(domain: "RecoraCapture", code: 18, userInfo: [NSLocalizedDescriptionKey: "ScreenCaptureKit did not finish the current recording segment while pausing."])
+                throw error
             }
             lock.lock()
             let finishError = recordingOutputError
@@ -305,6 +316,49 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         lock.unlock()
     }
 
+    func setMicrophoneEnabled(_ enabled: Bool) throws {
+        guard #available(macOS 15.0, *) else {
+            throw NSError(domain: "RecoraCapture", code: 33, userInfo: [NSLocalizedDescriptionKey: "Live microphone control requires macOS 15 or later."])
+        }
+        lock.lock()
+        guard let nativeStream = stream, let current = streamConfiguration, usesNativeRecordingOutput else {
+            lock.unlock()
+            throw NSError(domain: "RecoraCapture", code: 34, userInfo: [NSLocalizedDescriptionKey: "Live microphone control is unavailable for this recording."])
+        }
+        if microphoneEnabled == enabled {
+            lock.unlock()
+            return
+        }
+        let updated = SCStreamConfiguration()
+        updated.width = current.width
+        updated.height = current.height
+        updated.minimumFrameInterval = current.minimumFrameInterval
+        updated.queueDepth = current.queueDepth
+        updated.showsCursor = current.showsCursor
+        updated.capturesAudio = current.capturesAudio
+        updated.captureMicrophone = enabled
+        updated.sampleRate = current.sampleRate
+        updated.channelCount = current.channelCount
+        lock.unlock()
+
+        let configurationFinished = DispatchSemaphore(value: 0)
+        var updateError: String?
+        nativeStream.updateConfiguration(updated) { error in
+            updateError = error?.localizedDescription
+            configurationFinished.signal()
+        }
+        guard configurationFinished.wait(timeout: .now() + 10) == .success else {
+            throw NSError(domain: "RecoraCapture", code: 35, userInfo: [NSLocalizedDescriptionKey: "ScreenCaptureKit timed out while changing microphone state."])
+        }
+        if let updateError {
+            throw NSError(domain: "RecoraCapture", code: 36, userInfo: [NSLocalizedDescriptionKey: "Could not change microphone state: \(updateError)"])
+        }
+        lock.lock()
+        streamConfiguration = updated
+        microphoneEnabled = enabled
+        lock.unlock()
+    }
+
     func snapshotBase64() throws -> String {
         lock.lock()
         let frame = latestFrame
@@ -319,7 +373,7 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         return data.base64EncodedString()
     }
 
-    func stop() throws -> String {
+    func stop(expectedActiveDuration: Double) throws -> String {
         lock.lock()
         guard let nativeStream = stream else {
             lock.unlock()
@@ -337,6 +391,7 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         }
         isPaused = false
         let outputFinished = nativeOutput && activeOutput != nil ? (recordingOutputFinished ?? DispatchSemaphore(value: 0)) : nil
+        let activeSegmentURL = segmentURLs.last
         recordingOutputFinished = outputFinished
         lock.unlock()
 
@@ -353,10 +408,12 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             throw NSError(domain: "RecoraCapture", code: 15, userInfo: [NSLocalizedDescriptionKey: stopError])
         }
         if let outputFinished {
-            guard outputFinished.wait(timeout: .now() + 30) == .success else {
+            guard #available(macOS 15.0, *), let activeOutput = activeOutput as? SCRecordingOutput, let activeSegmentURL else {
                 resetCaptureState()
-                throw NSError(domain: "RecoraCapture", code: 21, userInfo: [NSLocalizedDescriptionKey: "ScreenCaptureKit did not signal that the MP4 recording was finalized."])
+                throw NSError(domain: "RecoraCapture", code: 21, userInfo: [NSLocalizedDescriptionKey: "The active ScreenCaptureKit recording segment is unavailable for finalization."])
             }
+            do { try waitForRecordingOutput(activeOutput, at: activeSegmentURL, callback: outputFinished) }
+            catch { resetCaptureState(); throw error }
         }
         sampleQueue.sync {}
 
@@ -364,6 +421,7 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         let frames = videoSamples
         let audioFrames = audioSamples
         let outputError = recordingOutputError
+        let captureError = streamError
         lock.unlock()
         guard frames > 0 else {
             assetWriter?.cancelWriting()
@@ -372,10 +430,22 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         }
 
         if nativeOutput {
+            if let captureError {
+                let recoveryFiles = segmentURLs.map(\.path).joined(separator: ", ")
+                resetCaptureState()
+                throw NSError(domain: "RecoraCapture", code: 37, userInfo: [NSLocalizedDescriptionKey: "ScreenCaptureKit stopped before the recording was complete: \(captureError). Captured media duration: \(formattedDuration(segmentDuration(segmentURLs))), recorder duration: \(formattedDuration(expectedActiveDuration)). Recovery segments: \(recoveryFiles)"])
+            }
             if let outputError {
                 let recoveryFiles = segmentURLs.map(\.path).joined(separator: ", ")
                 resetCaptureState()
                 throw NSError(domain: "RecoraCapture", code: 22, userInfo: [NSLocalizedDescriptionKey: "ScreenCaptureKit recording output failed: \(outputError). Recovery segment files: \(recoveryFiles)"])
+            }
+            let actualDuration = segmentDuration(segmentURLs)
+            let durationTolerance = max(3, expectedActiveDuration * 0.05)
+            if expectedActiveDuration > 0 && actualDuration + durationTolerance < expectedActiveDuration {
+                let recoveryFiles = segmentURLs.map(\.path).joined(separator: ", ")
+                resetCaptureState()
+                throw NSError(domain: "RecoraCapture", code: 38, userInfo: [NSLocalizedDescriptionKey: "Recording is incomplete: captured media is \(formattedDuration(actualDuration)) but the recorder ran for \(formattedDuration(expectedActiveDuration)). The incomplete video was not added to Recora. Recovery segments were kept at: \(recoveryFiles)"])
             }
             do {
                 try finalizeRecordingSegments(segmentURLs, destination: URL(fileURLWithPath: destination))
@@ -418,12 +488,14 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private func resetCaptureState() {
         lock.lock()
         stream = nil
+        streamConfiguration = nil
         writer = nil
         videoInput = nil
         audioInput = nil
         activeRecordingOutput = nil
         recordingOutputFinished = nil
         recordingOutputError = nil
+        streamError = nil
         segmentURLs = []
         usesNativeRecordingOutput = false
         outputURL = nil
@@ -439,6 +511,20 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         let baseName = destination.deletingPathExtension().lastPathComponent
         return destination.deletingLastPathComponent()
             .appendingPathComponent("\(baseName) - segment \(index + 1) - \(UUID().uuidString).mp4")
+    }
+
+    private func segmentDuration(_ segments: [URL]) -> Double {
+        segments.reduce(0) { total, url in
+            let asset = AVURLAsset(url: url)
+            let videoRange = asset.tracks(withMediaType: .video).first?.timeRange
+            return total + (videoRange?.duration.seconds ?? 0)
+        }
+    }
+
+    private func formattedDuration(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds > 0 else { return "00:00" }
+        let wholeSeconds = Int(seconds.rounded())
+        return String(format: "%02d:%02d", wholeSeconds / 60, wholeSeconds % 60)
     }
 
     @available(macOS 15.0, *)
@@ -458,6 +544,34 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             recordingOutputDelegate = delegate
         }
         return SCRecordingOutput(configuration: config, delegate: delegate)
+    }
+
+    @available(macOS 15.0, *)
+    private func waitForRecordingOutput(_ output: SCRecordingOutput, at url: URL, callback: DispatchSemaphore) throws {
+        _ = callback.wait(timeout: .now() + 2)
+        let deadline = Date().addingTimeInterval(18)
+        var previousSize: UInt64 = 0
+        var stablePolls = 0
+        while Date() < deadline {
+            let recordedSize = UInt64(max(0, output.recordedFileSize))
+            let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.uint64Value ?? 0
+            let size = max(recordedSize, fileSize)
+            if size > 0 && size == previousSize {
+                stablePolls += 1
+            } else {
+                stablePolls = 0
+            }
+            if stablePolls >= 3 {
+                let asset = AVURLAsset(url: url)
+                if !asset.tracks(withMediaType: .video).isEmpty && asset.duration.seconds.isFinite && asset.duration.seconds > 0 {
+                    return
+                }
+            }
+            previousSize = size
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.uint64Value ?? 0
+        throw NSError(domain: "RecoraCapture", code: 21, userInfo: [NSLocalizedDescriptionKey: "ScreenCaptureKit did not produce a finalized, readable MP4 segment (reported bytes: \(output.recordedFileSize), file bytes: \(fileSize)). Recovery file: \(url.path)"])
     }
 
     private func finalizeRecordingSegments(_ segments: [URL], destination: URL) throws {
@@ -585,6 +699,7 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     func stream(_ stream: SCStream, didStopWithError error: any Error) {
         lock.lock()
         isPaused = true
+        streamError = error.localizedDescription
         lock.unlock()
         NSLog("Recora ScreenCaptureKit stream stopped: %@", error.localizedDescription)
     }
@@ -636,9 +751,14 @@ public func recoraCapturePause(_ paused: Int32) -> UnsafeMutablePointer<CChar>? 
     return nativeError { try NativeRecorder.shared.setPaused(paused != 0) }
 }
 
+@_cdecl("recora_capture_set_microphone")
+public func recoraCaptureSetMicrophone(_ enabled: Int32) -> UnsafeMutablePointer<CChar>? {
+    nativeError { try NativeRecorder.shared.setMicrophoneEnabled(enabled != 0) }
+}
+
 @_cdecl("recora_capture_stop")
-public func recoraCaptureStop() -> UnsafeMutablePointer<CChar>? {
-    return nativeError { _ = try NativeRecorder.shared.stop() }
+public func recoraCaptureStop(_ expectedActiveDuration: Double) -> UnsafeMutablePointer<CChar>? {
+    return nativeError { _ = try NativeRecorder.shared.stop(expectedActiveDuration: expectedActiveDuration) }
 }
 
 @_cdecl("recora_capture_snapshot")

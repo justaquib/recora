@@ -17,3 +17,7 @@ npm run tauri dev
 ```
 cargo clean --manifest-path src-tauri/Cargo.toml
 ```
+
+## Documentation
+
+See `docs/` for architecture, design system, setup, contributing, coding standards, event contract, and project status. Agent instructions live in `AGENTS.md`.

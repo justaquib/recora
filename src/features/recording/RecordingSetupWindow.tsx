@@ -14,7 +14,11 @@ import { putVideo, readBlobDuration, saveBlobToDisk, readSetting, writeSetting }
 export default function RecordingSetupWindow() {
   const [captureMode, setCaptureMode] = useState<CaptureMode>("screen");
   const [cameraEnabled, setCameraEnabled] = useState(true);
+  const [bubbleVisible, setBubbleVisible] = useState(true);
+  const bubbleVisibleRef = useRef(true);
   const [micEnabled, setMicEnabled] = useState(true);
+  const micEnabledRef = useRef(micEnabled);
+  micEnabledRef.current = micEnabled;
   const [microphones, setMicrophones] = useState<Source[]>([]);
   const [cameras, setCameras] = useState<Source[]>([]);
   const [micId, setMicId] = useState("");
@@ -39,8 +43,8 @@ export default function RecordingSetupWindow() {
   const recordingChunks = useRef<Blob[]>([]);
   const recorderMimeType = useRef("video/webm");
   const recordingSession = useRef("");
-  const captureOptions = useRef({ captureMode, cameraEnabled });
-  captureOptions.current = { captureMode, cameraEnabled };
+  const captureOptions = useRef({ captureMode, cameraEnabled, micEnabled });
+  captureOptions.current = { captureMode, cameraEnabled, micEnabled };
   const startTime = useRef(0);
   const pauseStarted = useRef(0);
   const pausedTotal = useRef(0);
@@ -102,17 +106,19 @@ export default function RecordingSetupWindow() {
       const activePause = paused ? Date.now() - pauseStarted.current : 0;
       const currentElapsed = Math.floor((Date.now() - startTime.current - pausedTotal.current - activePause) / 1000);
       setElapsed(currentElapsed);
-      const status: WidgetStatus = { active: true, ready: true, paused, elapsed: currentElapsed, camera: captureMode === "screen" && cameraEnabled, cameraDeviceId: cameraId, screen: captureMode === "screen", bubble: captureMode === "screen" };
-      void emitTo("recording-controls", "recora:widget-status", status).catch(() => undefined);
+      const status: WidgetStatus = { active: true, ready: true, paused, elapsed: currentElapsed, camera: captureMode === "screen" && cameraEnabled, microphone: micEnabled, microphoneAvailable: captureMode === "screen" || Boolean(micStream.current?.getAudioTracks().length), cameraDeviceId: cameraId, screen: captureMode === "screen", bubble: captureMode === "screen" && bubbleVisibleRef.current };
+      void Promise.all(["camera-bubble", "recording-controls"].map((label) => emitTo(label, "recora:widget-status", status))).catch(() => undefined);
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [recording, paused, captureMode, cameraEnabled, cameraId]);
+  }, [recording, paused, captureMode, cameraEnabled, cameraId, micEnabled, bubbleVisible]);
   useEffect(() => {
     if (!recording) return;
-    const status: WidgetStatus = { active: true, ready: true, paused, elapsed, camera: captureMode === "screen" && cameraEnabled, cameraDeviceId: cameraId, screen: captureMode === "screen", bubble: captureMode === "screen" };
-    void emitTo("recording-controls", "recora:widget-status", status).catch(() => undefined);
-  }, [recording, paused, elapsed, captureMode, cameraEnabled, cameraId]);
-  const showRecordingWidgets = async (showBubble: boolean, hasCamera: boolean, cameraDeviceId: string) => {
+    const status: WidgetStatus = { active: true, ready: true, paused, elapsed, camera: captureMode === "screen" && cameraEnabled, microphone: micEnabled, microphoneAvailable: captureMode === "screen" || Boolean(micStream.current?.getAudioTracks().length), cameraDeviceId: cameraId, screen: captureMode === "screen", bubble: captureMode === "screen" && bubbleVisible };
+    void Promise.all(["camera-bubble", "recording-controls"].map((label) => emitTo(label, "recora:widget-status", status))).catch(() => undefined);
+  }, [recording, paused, elapsed, captureMode, cameraEnabled, cameraId, micEnabled, bubbleVisible]);
+  const showRecordingWidgets = async (showBubble: boolean, hasCamera: boolean, cameraDeviceId: string, microphoneEnabled: boolean, microphoneAvailable: boolean) => {
+    bubbleVisibleRef.current = showBubble;
+    setBubbleVisible(showBubble);
     try {
       const monitor = await primaryMonitor();
       const scale = monitor?.scaleFactor || 1;
@@ -122,8 +128,7 @@ export default function RecordingSetupWindow() {
       const height = (monitor?.size.height || 900) / scale;
       const positions: Array<[string, number, number, boolean]> = [
         ["camera-bubble", left + width - 218, top + 42, showBubble],
-        ["recording-controls", left + (width - 480) / 2, top + height - 145, true],
-        ["quick-home", left + 26, top + height - 134, true],
+        ["recording-controls", left + (width - 468) / 2, top + height - 145, true],
       ];
       for (const [label, x, y, shouldShow] of positions) {
         const widget = await WebviewWindow.getByLabel(label);
@@ -141,10 +146,10 @@ export default function RecordingSetupWindow() {
         }
         else await widget.hide();
       }
-      const status: WidgetStatus = { active: true, paused: false, elapsed: 0, camera: hasCamera, cameraDeviceId, screen: showBubble, bubble: showBubble };
+      const status: WidgetStatus = { active: true, paused: false, elapsed: 0, camera: hasCamera, microphone: microphoneEnabled, microphoneAvailable, cameraDeviceId, screen: showBubble, bubble: showBubble };
       // A newly shown WebView may still be starting; repeat the idempotent status event briefly.
       for (let attempt = 0; attempt < 5; attempt += 1) {
-        await Promise.all(["camera-bubble", "recording-controls", "quick-home", "annotation-overlay"].map((label) => emitTo(label, "recora:widget-status", status)));
+        await Promise.all(["camera-bubble", "recording-controls", "annotation-overlay"].map((label) => emitTo(label, "recora:widget-status", status)));
         await new Promise((resolve) => window.setTimeout(resolve, 120));
       }
     } catch (cause) {
@@ -160,8 +165,8 @@ export default function RecordingSetupWindow() {
       annotationSnapshotKey.current = null;
     }
     try {
-      await Promise.all(["camera-bubble", "recording-controls", "quick-home", "annotation-overlay"].map((label) => emitTo(label, "recora:widget-status", inactive)));
-      for (const label of ["camera-bubble", "recording-controls", "quick-home", "annotation-overlay"]) {
+      await Promise.all(["camera-bubble", "recording-controls", "annotation-overlay"].map((label) => emitTo(label, "recora:widget-status", inactive)));
+      for (const label of ["camera-bubble", "recording-controls", "annotation-overlay"]) {
         const widget = await WebviewWindow.getByLabel(label);
         await widget?.hide();
       }
@@ -190,11 +195,15 @@ export default function RecordingSetupWindow() {
       if (!blob.size) throw new Error(`No media frames were encoded (${mimeType}). Check that the selected capture source is still active.`);
       setRecording(false); setPaused(false);
       const savingStatus: WidgetStatus = { active: true, ready: false, paused: false, elapsed: captureDuration, camera: false, saving: true, savingStage: "saving" };
-      await Promise.all(["camera-bubble", "recording-controls", "quick-home", "annotation-overlay"].map((label) => emitTo(label, "recora:widget-status", savingStatus)));
+      await Promise.all(["camera-bubble", "recording-controls", "annotation-overlay"].map((label) => emitTo(label, "recora:widget-status", savingStatus)));
       const extension = mimeType.includes("mp4") ? "mp4" : "webm";
       const mediaDuration = await readBlobDuration(blob);
       const recordedDuration = mediaDuration ?? captureDuration;
       const incomplete = mediaDuration !== null && captureDuration - mediaDuration > 3;
+      if (incomplete) {
+        const recovery = alreadySavedPath ? ` The untouched recovery file is at ${alreadySavedPath}.` : " The incomplete media was not added to the library.";
+        throw new Error(`Recording is incomplete: playable media is ${formatTime(mediaDuration)} but the recorder ran for ${formatTime(captureDuration)}.${recovery}`);
+      }
       const video: VideoItem = { id: crypto.randomUUID(), title: `Untitled recording ${new Date().toLocaleDateString()}`, createdAt: Date.now(), duration: recordedDuration, captureDuration, blob, thumbnail: "", mimeType, hasCamera: captureOptions.current.captureMode === "camera" || (captureOptions.current.captureMode === "screen" && captureOptions.current.cameraEnabled), filePath: alreadySavedPath || undefined, filePaths: alreadySavedPath ? [alreadySavedPath] : undefined };
       await putVideo(video);
       setSavingFile(true);
@@ -269,7 +278,7 @@ export default function RecordingSetupWindow() {
         nativeRecordingPath.current = nativePath;
         recordingSession.current = sessionId;
         await writeSetting("isRecording", true);
-        await showRecordingWidgets(true, cameraEnabled, cameraId);
+        await showRecordingWidgets(true, cameraEnabled, cameraId, micEnabled, true);
         startTime.current = Date.now();
         setRecording(true);
         await currentWindow.hide();
@@ -281,7 +290,7 @@ export default function RecordingSetupWindow() {
       micStream.current?.getAudioTracks().forEach((track) => output.addTrack(track));
       recordingSession.current = sessionId;
       await writeSetting("isRecording", true);
-      await showRecordingWidgets(false, false, cameraId);
+      await showRecordingWidgets(false, false, cameraId, micEnabled, Boolean(micStream.current?.getAudioTracks().length));
 
       const mimeType = ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4;codecs=avc1.42E01E", "video/mp4", "video/webm;codecs=vp8,opus", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8", "video/webm"]
         .find((type) => MediaRecorder.isTypeSupported(type));
@@ -326,7 +335,7 @@ export default function RecordingSetupWindow() {
       await prepareCaptureHost();
     } catch (cause) {
       void writeSetting("isRecording", false).catch(() => undefined);
-      if (nativeRecordingPath.current) await invoke("native_capture_stop").catch(() => undefined);
+      if (nativeRecordingPath.current) await invoke("native_capture_stop", { expectedDurationSeconds: 0 }).catch(() => undefined);
       if (nativePath) await invoke("delete_recording_file", { path: nativePath }).catch(() => undefined);
       nativeRecordingPath.current = null;
       mediaRecorder.current = null;
@@ -341,12 +350,12 @@ export default function RecordingSetupWindow() {
     const activePause = pausedRef.current ? Date.now() - pauseStarted.current : 0;
     latestElapsed.current = Math.floor((Date.now() - startTime.current - pausedTotal.current - activePause) / 1000);
     const finalizingStatus: WidgetStatus = { active: true, ready: false, paused: false, elapsed: latestElapsed.current, camera: false, saving: true, savingStage: "finalizing" };
-    void Promise.all(["camera-bubble", "recording-controls", "quick-home", "annotation-overlay"].map((label) => emitTo(label, "recora:widget-status", finalizingStatus)));
+    void Promise.all(["camera-bubble", "recording-controls", "annotation-overlay"].map((label) => emitTo(label, "recora:widget-status", finalizingStatus)));
     if (nativeRecordingPath.current) {
       const nativePath = nativeRecordingPath.current;
       void (async () => {
         try {
-          await invoke("native_capture_stop");
+          await invoke("native_capture_stop", { expectedDurationSeconds: latestElapsed.current });
           const bytes = await invoke<number[]>("read_recording_file", { path: nativePath });
           if (bytes.length < 1024) throw new Error(`ScreenCaptureKit wrote only ${formatFileSize(bytes.length)}. No usable frames were captured.`);
           const blob = new Blob([Uint8Array.from(bytes).buffer], { type: "video/mp4" });
@@ -401,8 +410,23 @@ export default function RecordingSetupWindow() {
     void emitTo("recording-controls", "recora:widget-status", {
       active: true, ready: true, paused: pausedRef.current, elapsed: currentElapsed,
       camera: captureOptions.current.captureMode === "screen" && captureOptions.current.cameraEnabled,
-      cameraDeviceId: cameraId, screen: captureOptions.current.captureMode === "screen", bubble: captureOptions.current.captureMode === "screen",
+      microphone: micEnabledRef.current,
+      cameraDeviceId: cameraId, screen: captureOptions.current.captureMode === "screen", bubble: captureOptions.current.captureMode === "screen" && bubbleVisibleRef.current,
     } satisfies WidgetStatus).catch(() => undefined);
+  };
+
+  const toggleMicrophone = async () => {
+    const nextEnabled = !micEnabledRef.current;
+    if (nativeRecordingPath.current) {
+      await invoke("native_capture_set_microphone", { enabled: nextEnabled });
+    } else {
+      const tracks = micStream.current?.getAudioTracks() ?? [];
+      if (!tracks.length) throw new Error("Microphone audio was disabled when this recording started. Start a new recording with microphone enabled to use this control.");
+      tracks.forEach((track) => { track.enabled = nextEnabled; });
+    }
+    micEnabledRef.current = nextEnabled;
+    captureOptions.current = { ...captureOptions.current, micEnabled: nextEnabled };
+    setMicEnabled(nextEnabled);
   };
 
   const captureAnnotationFrame = async () => {
@@ -437,9 +461,20 @@ export default function RecordingSetupWindow() {
     let unlisten: (() => void) | undefined;
     let unlistenPosition: (() => void) | undefined;
     let unlistenAnnotation: (() => void) | undefined;
-    void listen<{ action: "pause" | "stop" | "home" }>("recora:widget-action", async (event) => {
+    let unlistenCameraSettings: (() => void) | undefined;
+    void listen<{ action: "pause" | "stop" | "home" | "microphone" | "bubble" }>("recora:widget-action", async (event) => {
       if (event.payload.action === "pause") togglePause();
       if (event.payload.action === "stop") stopRecording();
+      if (event.payload.action === "microphone") void toggleMicrophone().catch((cause) => setNotice(friendlyError(cause)));
+      if (event.payload.action === "bubble") {
+        const visible = !bubbleVisibleRef.current;
+        bubbleVisibleRef.current = visible;
+        setBubbleVisible(visible);
+        if (!visible) {
+          captureOptions.current = { ...captureOptions.current, cameraEnabled: false };
+          setCameraEnabled(false);
+        }
+      }
       if (event.payload.action === "home") {
         const main = await WebviewWindow.getByLabel("main");
         await main?.unminimize(); await main?.show(); await main?.setFocus();
@@ -448,6 +483,13 @@ export default function RecordingSetupWindow() {
     void listen<{ label: string; x: number; y: number }>("recora:widget-moved", (event) => {
       try { localStorage.setItem(`recora-widget-position-${event.payload.label}`, JSON.stringify({ x: event.payload.x, y: event.payload.y })); } catch { /* position still moves for this session */ }
     }).then((stop) => { unlistenPosition = stop; }).catch((cause) => console.warn("Could not persist floating widget position", cause));
+    void listen<{ camera?: boolean; cameraDeviceId?: string }>("recora:camera-settings", (event) => {
+      if (event.payload.camera !== undefined) {
+        captureOptions.current = { ...captureOptions.current, cameraEnabled: event.payload.camera };
+        setCameraEnabled(event.payload.camera);
+      }
+      if (event.payload.cameraDeviceId !== undefined) setCameraId(event.payload.cameraDeviceId);
+    }).then((stop) => { unlistenCameraSettings = stop; }).catch((cause) => console.warn("Could not listen for camera settings", cause));
     void listen<{ tool: AnnotationTool }>("recora:annotation-request", async (event) => {
       const tool = event.payload.tool;
       if (tool === "cursor" || tool === "off") {
@@ -474,7 +516,7 @@ export default function RecordingSetupWindow() {
         setNotice(cause instanceof Error ? cause.message : "Could not freeze the screen for annotation.");
       }
     }).then((stop) => { unlistenAnnotation = stop; }).catch((cause) => console.warn("Could not listen for annotation requests", cause));
-    return () => { unlisten?.(); unlistenPosition?.(); unlistenAnnotation?.(); };
+    return () => { unlisten?.(); unlistenPosition?.(); unlistenAnnotation?.(); unlistenCameraSettings?.(); };
   }, []);
 
   const skipCountdown = () => {
