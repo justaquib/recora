@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { emitTo, listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import "../App.css";
 import { Icon } from "../components/Icon";
 import LibraryPage from "./LibraryPage";
@@ -37,9 +38,22 @@ export default function MainApp() {
     void writeSetting("isRecording", false).catch(() => undefined);
     void readSetting<string>("saveDirectory").then((value) => setSaveDirectory(value || "")).catch(() => undefined);
     let unlistenLibrary: (() => void) | undefined;
+    let unlistenFocus: (() => void) | undefined;
+    const closeFloatingWindows = async () => {
+      const inactive = { active: false, ready: false, recording: false, preparing: false, paused: false, elapsed: 0, camera: false, bubble: false, saving: false };
+      await Promise.all(["camera-bubble", "recording-controls", "annotation-overlay"].map((label) => emitTo(label, "recora:widget-status", inactive).catch(() => undefined)));
+      await emitTo("recording-countdown", recordingEvents.countdownState, { remaining: null }).catch(() => undefined);
+      await Promise.all(["camera-bubble", "recording-controls", "recording-countdown", "annotation-overlay"].map(async (label) => {
+        const widget = await WebviewWindow.getByLabel(label).catch(() => null);
+        await widget?.hide().catch(() => undefined);
+      }));
+    };
+    void closeFloatingWindows();
+    void getCurrentWindow().onFocusChanged(({ payload }) => { if (payload) void closeFloatingWindows(); })
+      .then((stop) => { unlistenFocus = stop; }).catch((cause) => console.warn("Could not listen for dashboard focus", cause));
     void listen<{ id: string }>(recordingEvents.libraryChanged, () => { void refresh(); })
       .then((stop) => { unlistenLibrary = stop; }).catch((cause) => console.warn("Could not listen for library updates", cause));
-    return () => { unlistenLibrary?.(); };
+    return () => { unlistenLibrary?.(); unlistenFocus?.(); };
   }, [refresh]);
 
   useEffect(() => {

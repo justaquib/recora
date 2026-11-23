@@ -166,7 +166,7 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
     return () => window.clearInterval(timer);
   }, [kind, status.active, status.recording, status.paused, status.saving]);
 
-  const sendAction = (action: "pause" | "stop" | "home" | "microphone" | "bubble" | "new") => {
+  const sendAction = (action: "pause" | "stop" | "home" | "microphone" | "bubble" | "new" | "close") => {
     if (statusRef.current.saving) return;
     if (action === "stop" && kind === "controls") {
       if (!statusRef.current.ready) return;
@@ -306,19 +306,29 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
   }
 
   return <div className="floating-root controls-widget-root" onMouseDown={beginDrag} title="Drag to move">
-    <div className={`controls-widget ${status.saving ? "is-saving" : ""}`}>
+    <div className={`controls-widget ${status.saving ? "is-saving" : ""} ${status.preparing ? "is-preparing" : ""} ${status.recording ? "is-recording" : "is-idle"}`}>
       {status.saving ? <div className="widget-saving-state" role="status" aria-live="polite">
         <span className="saving-spinner" aria-hidden="true" />
         <div className="widget-saving-copy"><strong>{status.savingStage === "finalizing" ? "FINALIZING RECORDING" : "SAVING RECORDING"}</strong><small>{status.savingStage === "finalizing" ? "Please wait while the video is prepared" : "Please wait while your video is saved"}</small></div>
-      </div> : <>
-        <div className="widget-drag-grip" aria-hidden="true">⠿</div>
-        <button className={`widget-control stop-widget ${status.recording ? "" : "new-recording-widget"}`} disabled={status.saving} onClick={() => sendAction(status.recording ? "stop" : "new")} aria-label={status.recording ? "Stop recording" : "Start a new recording"} title={status.recording ? "Stop recording" : "Start a new recording"}><Icon name={status.recording ? "stop" : "plus"} size={14} /></button>
-        {status.recording && <><span className="widget-time glass-timer">{formatTime(widgetElapsed)}</span><div className="widget-divider" />
+      </div> : status.preparing ? <div className="widget-preparing-state"><span className="widget-drag-grip" aria-hidden="true">⠿</span><span className="preparing-spinner" /><div><strong>Preparing your recording</strong><small>Get ready — starting soon</small></div></div> : status.recording ? <>
+        <span className="widget-drag-grip" aria-hidden="true">⠿</span>
+        <div className="widget-recording-label"><span className="widget-rec-dot" /><div><strong>REC</strong><small>{status.paused ? "Paused" : "Recording"}</small></div></div>
+        <span className="widget-time glass-timer">{formatTime(widgetElapsed)}</span>
+        <span className="widget-divider" />
         <button className="widget-control pause-widget" disabled={!status.ready} onClick={() => sendAction("pause")} aria-label={status.paused ? "Resume recording" : "Pause recording"} title={status.paused ? "Resume" : "Pause"}><Icon name={status.paused ? "play" : "pause"} size={16} /></button>
-        <button className={`widget-control microphone-widget ${status.microphone ? "" : "is-muted"}`} disabled={!status.ready || !status.microphoneAvailable} onClick={() => sendAction("microphone")} aria-label={status.microphone ? "Mute microphone" : "Unmute microphone"} title={status.microphone ? "Mute microphone" : status.microphoneAvailable ? "Unmute microphone" : "Microphone was unavailable when recording started"}><Icon name={status.microphone ? "mic" : "micOff"} size={16} />{status.microphone && <span className="audio-level-bars" ref={audioBars} aria-hidden="true">{[0.45, 0.72, 1, 0.65, 0.38].map((_, index) => <i key={index} style={{ transform: "scaleY(.2)" }} />)}</span>}</button></>}
-        <button className={`widget-control camera-bubble-toggle ${status.bubble ? "selected" : ""}`} disabled={status.saving || !status.screen} onClick={() => sendAction("bubble")} aria-label={status.bubble ? "Hide camera bubble and turn off camera" : "Show camera bubble"} title={status.bubble ? "Hide camera bubble and turn off camera" : "Show camera bubble"}><Icon name={status.bubble ? "camera" : "cameraOff"} size={16} /></button>
-        {status.recording && <button className={`widget-control tool-widget annotate-toggle ${activeTool !== "cursor" ? "selected" : ""}`} disabled={!status.screen} onClick={() => void toggleAnnotation(activeTool === "cursor" ? "pen" : "cursor")} aria-label={activeTool === "cursor" ? "Open annotation tools" : "Return to cursor mode"} title={activeTool === "cursor" ? "Annotate" : "Cursor mode"}><Icon name="pen" size={16} /></button>}
+        <button className={`widget-control microphone-widget ${status.microphone ? "" : "is-muted"}`} disabled={!status.ready || !status.microphoneAvailable} onClick={() => sendAction("microphone")} aria-label={status.microphone ? "Mute microphone" : "Unmute microphone"} title={status.microphone ? "Mute microphone" : status.microphoneAvailable ? "Unmute microphone" : "Microphone was unavailable when recording started"}><Icon name={status.microphone ? "mic" : "micOff"} size={16} />{status.microphone && <span className="audio-level-bars" ref={audioBars} aria-hidden="true">{[0.45, 0.72, 1, 0.65, 0.38].map((_, index) => <i key={index} style={{ transform: "scaleY(.2)" }} />)}</span>}</button>
+        <button className={`widget-control camera-bubble-toggle ${status.bubble ? "selected" : ""}`} onClick={() => sendAction("bubble")} aria-label={status.bubble ? "Hide camera bubble and turn off camera" : "Show camera bubble"} title={status.bubble ? "Hide camera bubble and turn off camera" : "Show camera bubble"}><Icon name={status.bubble ? "camera" : "cameraOff"} size={16} /></button>
+        <button className={`widget-control tool-widget annotate-toggle ${activeTool !== "cursor" ? "selected" : ""}`} disabled={!status.screen} onClick={() => void toggleAnnotation(activeTool === "cursor" ? "pen" : "cursor")} aria-label={activeTool === "cursor" ? "Open annotation tools" : "Return to cursor mode"} title={activeTool === "cursor" ? "Annotate" : "Cursor mode"}><Icon name="pen" size={16} /></button>
         <button className="widget-control home-widget-button" onClick={() => sendAction("home")} aria-label="Open Recora library" title="Open Recora library"><Icon name="home" size={17} /></button>
+        <button className="widget-control stop-widget" disabled={!status.ready} onClick={() => sendAction("stop")} aria-label="Stop recording" title="Stop recording"><Icon name="stop" size={14} /></button>
+      </> : <>
+        <span className="widget-drag-grip" aria-hidden="true">⠿</span>
+        <div className="widget-ready-brand"><span className="widget-ready-mark"><Icon name="logo" size={19} /></span><div><strong>Ready when you are</strong><small>Local recording · private by design</small></div></div>
+        <button className="widget-start-recording" onClick={() => sendAction("new")}><Icon name="plus" size={15} /> New recording</button>
+        {status.screen && <span className="widget-divider" />}
+        {status.screen && <button className={`widget-control camera-bubble-toggle ${status.bubble ? "selected" : ""}`} onClick={() => sendAction("bubble")} aria-label={status.bubble ? "Hide camera bubble and turn off camera" : "Show camera bubble"} title={status.bubble ? "Hide camera bubble and turn off camera" : "Show camera bubble"}><Icon name={status.bubble ? "camera" : "cameraOff"} size={16} /></button>}
+        <button className="widget-control home-widget-button" onClick={() => sendAction("home")} aria-label="Open Recora dashboard" title="Open Recora dashboard"><Icon name="home" size={17} /></button>
+        <button className="widget-control close-widget-button" onClick={() => sendAction("close")} aria-label="Close floating widgets" title="Close floating widgets"><Icon name="close" size={15} /></button>
       </>}
     </div>
   </div>;

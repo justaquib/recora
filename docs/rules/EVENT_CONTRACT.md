@@ -8,6 +8,10 @@ Cross-webview messages are typed and centralized. Do not add ad-hoc event names.
 | --- | --- | --- |
 | `recora:library-changed` | none | Notify main window that recordings changed |
 | `recora:setup-config` | setup config | Configure the recording setup webview |
+| `recora:countdown-state` | `{ remaining: number | null }` | Update or dismiss the independent countdown window |
+| `recora:countdown-skip` | `{}` | Start capture immediately from the countdown window |
+| `recora:widget-status` | `WidgetStatus` or partial status | Sync recorder state to camera, controls, and annotation webviews |
+| `recora:widget-action` | `{ action: string }` | Send floating control actions to the recording setup webview |
 
 ## Widget status
 

@@ -5,6 +5,7 @@ import { getCurrentWindow, LogicalPosition, LogicalSize, PhysicalPosition, prima
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import "../../App.css";
 import { Icon } from "../../components/Icon";
+import RecordingIssueModal from "../../components/RecordingIssueModal";
 import RecorderSetupModal from "../../components/RecorderSetupModal";
 import { friendlyError, formatFileSize, formatTime } from "../../utils/format";
 import { recordingEvents } from "./recordingEvents";
@@ -32,7 +33,6 @@ export default function RecordingSetupWindow() {
   const [showRecorder, setShowRecorder] = useState(true);
   const [busy, setBusy] = useState(false);
   const [countdownDuration, setCountdownDuration] = useState(5);
-  const [countdown, setCountdown] = useState<number | null>(null);
   const [savingFile, setSavingFile] = useState(false);
   const saveDirectory = useRef<string | null>(null);
 
@@ -60,6 +60,14 @@ export default function RecordingSetupWindow() {
   const countdownFinish = useRef<(() => void) | null>(null);
 
   const currentWindow = getCurrentWindow();
+  const skipCountdown = () => {
+    if (countdownTimer.current !== null) window.clearTimeout(countdownTimer.current);
+    countdownTimer.current = null;
+    void emitTo("recording-countdown", recordingEvents.countdownState, { remaining: null }).catch(() => undefined);
+    void WebviewWindow.getByLabel("recording-countdown").then((widget) => widget?.hide()).catch(() => undefined);
+    countdownFinish.current?.();
+    countdownFinish.current = null;
+  };
   useEffect(() => {
     document.documentElement.style.backgroundColor = "transparent";
     document.body.style.backgroundColor = "transparent";
@@ -115,14 +123,14 @@ export default function RecordingSetupWindow() {
       const activePause = paused ? Date.now() - pauseStarted.current : 0;
       const currentElapsed = Math.floor((Date.now() - startTime.current - pausedTotal.current - activePause) / 1000);
       setElapsed(currentElapsed);
-      const status: WidgetStatus = { active: true, ready: true, recording: true, paused, elapsed: currentElapsed, camera: captureMode === "screen" && cameraEnabled, microphone: micEnabled, microphoneAvailable: captureMode === "screen" || Boolean(micStream.current?.getAudioTracks().length), cameraDeviceId: cameraId, screen: captureMode === "screen", bubble: captureMode === "screen" && bubbleVisibleRef.current, bubbleRevision: bubbleRevision.current };
+      const status: WidgetStatus = { active: true, ready: true, recording: true, preparing: false, paused, elapsed: currentElapsed, camera: captureMode === "screen" && cameraEnabled, microphone: micEnabled, microphoneAvailable: captureMode === "screen" || Boolean(micStream.current?.getAudioTracks().length), cameraDeviceId: cameraId, screen: captureMode === "screen", bubble: captureMode === "screen" && bubbleVisibleRef.current, bubbleRevision: bubbleRevision.current };
       void Promise.all(["camera-bubble", "recording-controls"].map((label) => emitTo(label, "recora:widget-status", status))).catch(() => undefined);
     }, 1000);
     return () => window.clearInterval(timer);
   }, [recording, paused, captureMode, cameraEnabled, cameraId, micEnabled, bubbleVisible]);
   useEffect(() => {
     if (!recording) return;
-    const status: WidgetStatus = { active: true, ready: true, recording: true, paused, elapsed, camera: captureMode === "screen" && cameraEnabled, microphone: micEnabled, microphoneAvailable: captureMode === "screen" || Boolean(micStream.current?.getAudioTracks().length), cameraDeviceId: cameraId, screen: captureMode === "screen", bubble: captureMode === "screen" && bubbleVisible, bubbleRevision: bubbleRevision.current };
+    const status: WidgetStatus = { active: true, ready: true, recording: true, preparing: false, paused, elapsed, camera: captureMode === "screen" && cameraEnabled, microphone: micEnabled, microphoneAvailable: captureMode === "screen" || Boolean(micStream.current?.getAudioTracks().length), cameraDeviceId: cameraId, screen: captureMode === "screen", bubble: captureMode === "screen" && bubbleVisible, bubbleRevision: bubbleRevision.current };
     void Promise.all(["camera-bubble", "recording-controls"].map((label) => emitTo(label, "recora:widget-status", status))).catch(() => undefined);
   }, [recording, paused, elapsed, captureMode, cameraEnabled, cameraId, micEnabled, bubbleVisible]);
   const showRecordingWidgets = async (showBubble: boolean, hasCamera: boolean, cameraDeviceId: string, microphoneEnabled: boolean, microphoneAvailable: boolean) => {
@@ -150,7 +158,7 @@ export default function RecordingSetupWindow() {
         }
         else await widget.hide();
       }
-      const status: WidgetStatus = { active: true, ready: false, recording: false, paused: false, elapsed: 0, camera: hasCamera, microphone: microphoneEnabled, microphoneAvailable, cameraDeviceId, screen: showBubble || hasCamera, bubble: showBubble, bubbleRevision: bubbleRevision.current };
+      const status: WidgetStatus = { active: true, ready: false, recording: false, preparing: true, paused: false, elapsed: 0, camera: hasCamera, microphone: microphoneEnabled, microphoneAvailable, cameraDeviceId, screen: showBubble || hasCamera, bubble: showBubble, bubbleRevision: bubbleRevision.current };
       // A newly shown WebView may still be starting; repeat the idempotent status event briefly.
       for (let attempt = 0; attempt < 5; attempt += 1) {
         await Promise.all(["camera-bubble", "recording-controls", "annotation-overlay"].map((label) => emitTo(label, "recora:widget-status", status)));
@@ -162,15 +170,33 @@ export default function RecordingSetupWindow() {
     }
   };
 
+  const placeCountdownWidget = async () => {
+    const widget = await WebviewWindow.getByLabel("recording-countdown");
+    if (!widget) throw new Error("The floating countdown window is unavailable. Restart Recora and try again.");
+    const monitor = await primaryMonitor();
+    const scale = monitor?.scaleFactor || 1;
+    const left = (monitor?.position.x || 0) / scale;
+    const top = (monitor?.position.y || 0) / scale;
+    const width = (monitor?.size.width || 1440) / scale;
+    const height = (monitor?.size.height || 900) / scale;
+    await widget.setPosition(new LogicalPosition(left + (width - 240) / 2, top + (height - 220) / 2));
+    await widget.show();
+  };
+
+  const publishCountdown = async (remaining: number | null) => {
+    await emitTo("recording-countdown", recordingEvents.countdownState, { remaining }).catch(() => undefined);
+  };
+
   const hideRecordingWidgets = async () => {
-    const inactive: WidgetStatus = { active: false, ready: false, recording: false, paused: false, elapsed: 0, camera: false, saving: false };
+    const inactive: WidgetStatus = { active: false, ready: false, recording: false, preparing: false, paused: false, elapsed: 0, camera: false, saving: false };
+    void emitTo("recording-countdown", recordingEvents.countdownState, { remaining: null }).catch(() => undefined);
     if (annotationSnapshotKey.current) {
       try { localStorage.removeItem(annotationSnapshotKey.current); } catch { /* optional snapshot cleanup */ }
       annotationSnapshotKey.current = null;
     }
     try {
       await Promise.all(["camera-bubble", "recording-controls", "annotation-overlay"].map((label) => emitTo(label, "recora:widget-status", inactive)));
-      for (const label of ["camera-bubble", "recording-controls", "annotation-overlay"]) {
+      for (const label of ["camera-bubble", "recording-controls", "recording-countdown", "annotation-overlay"]) {
         const widget = await WebviewWindow.getByLabel(label);
         await widget?.hide();
       }
@@ -290,12 +316,24 @@ export default function RecordingSetupWindow() {
           await waitForUnmutedTracks(micStream.current, "Microphone");
         }
       }
+      setElapsed(0); latestElapsed.current = 0; pausedTotal.current = 0; stopRequested.current = false;
+      setShowRecorder(false); setPaused(false); pausedRef.current = false;
+      await currentWindow.hide();
+      await showRecordingWidgets(captureMode === "screen", captureMode === "screen" && cameraEnabled, cameraId, micEnabled, captureMode === "screen" || Boolean(micStream.current?.getAudioTracks().length));
       if (countdownDuration > 0) {
+        await placeCountdownWidget();
         await new Promise<void>((resolve) => {
           countdownFinish.current = resolve;
           const tick = (remaining: number) => {
-            setCountdown(remaining);
-            if (remaining <= 0) { countdownFinish.current = null; setCountdown(null); resolve(); return; }
+            void publishCountdown(remaining);
+            if (remaining <= 0) {
+              countdownTimer.current = null;
+              countdownFinish.current = null;
+              void emitTo("recording-countdown", recordingEvents.countdownState, { remaining: null }).catch(() => undefined);
+              void WebviewWindow.getByLabel("recording-countdown").then((widget) => widget?.hide()).catch(() => undefined);
+              resolve();
+              return;
+            }
             countdownTimer.current = window.setTimeout(() => tick(remaining - 1), 1000);
           };
           tick(countdownDuration);
@@ -306,8 +344,6 @@ export default function RecordingSetupWindow() {
         await meterContext.current?.resume().catch(() => undefined);
       }
       const sessionId = crypto.randomUUID();
-      setElapsed(0); latestElapsed.current = 0; pausedTotal.current = 0; stopRequested.current = false;
-      setShowRecorder(false); setPaused(false); pausedRef.current = false;
 
       if (nativePath) {
         await invoke("native_capture_start", { path: nativePath, microphone: micEnabled });
@@ -315,7 +351,6 @@ export default function RecordingSetupWindow() {
         recordingSession.current = sessionId;
         await writeSetting("isRecording", true);
         startTime.current = Date.now();
-        await showRecordingWidgets(true, cameraEnabled, cameraId, micEnabled, true);
         setRecording(true);
         await currentWindow.hide();
         return;
@@ -326,7 +361,6 @@ export default function RecordingSetupWindow() {
       micStream.current?.getAudioTracks().forEach((track) => output.addTrack(track));
       recordingSession.current = sessionId;
       await writeSetting("isRecording", true);
-      await showRecordingWidgets(false, false, cameraId, micEnabled, Boolean(micStream.current?.getAudioTracks().length));
 
       const mimeType = ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4;codecs=avc1.42E01E", "video/mp4", "video/webm;codecs=vp8,opus", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8", "video/webm"]
         .find((type) => MediaRecorder.isTypeSupported(type));
@@ -515,7 +549,8 @@ export default function RecordingSetupWindow() {
     let positionWriteTimer: number | null = null;
     let unlistenAnnotation: (() => void) | undefined;
     let unlistenCameraSettings: (() => void) | undefined;
-    void listen<{ action: "pause" | "stop" | "home" | "microphone" | "bubble" | "new" }>("recora:widget-action", async (event) => {
+    let unlistenCountdownSkip: (() => void) | undefined;
+    void listen<{ action: "pause" | "stop" | "home" | "microphone" | "bubble" | "new" | "close" }>("recora:widget-action", async (event) => {
       if (event.payload.action === "pause") togglePause();
       if (event.payload.action === "stop") stopRecording();
       if (event.payload.action === "microphone") void toggleMicrophone().catch((cause) => setNotice(friendlyError(cause)));
@@ -550,6 +585,10 @@ export default function RecordingSetupWindow() {
         setError(""); setShowRecorder(true);
         await restoreSetupWindow();
       }
+      if (event.payload.action === "close") {
+        await hideRecordingWidgets();
+        return;
+      }
       if (event.payload.action === "home") {
         const main = await WebviewWindow.getByLabel("main");
         await main?.unminimize(); await main?.show(); await main?.setFocus();
@@ -569,6 +608,8 @@ export default function RecordingSetupWindow() {
       }
       if (event.payload.cameraDeviceId !== undefined) setCameraId(event.payload.cameraDeviceId);
     }).then((stop) => { unlistenCameraSettings = stop; }).catch((cause) => console.warn("Could not listen for camera settings", cause));
+    void listen<Record<string, never>>(recordingEvents.countdownSkip, () => skipCountdown())
+      .then((stop) => { unlistenCountdownSkip = stop; }).catch((cause) => console.warn("Could not listen for countdown skip", cause));
     void listen<{ tool: AnnotationTool }>("recora:annotation-request", async (event) => {
       const tool = event.payload.tool;
       if (tool === "cursor" || tool === "off") {
@@ -595,13 +636,8 @@ export default function RecordingSetupWindow() {
         setNotice(cause instanceof Error ? cause.message : "Could not freeze the screen for annotation.");
       }
     }).then((stop) => { unlistenAnnotation = stop; }).catch((cause) => console.warn("Could not listen for annotation requests", cause));
-    return () => { if (positionWriteTimer !== null) window.clearTimeout(positionWriteTimer); unlisten?.(); unlistenPosition?.(); unlistenAnnotation?.(); unlistenCameraSettings?.(); };
+    return () => { if (positionWriteTimer !== null) window.clearTimeout(positionWriteTimer); unlisten?.(); unlistenPosition?.(); unlistenAnnotation?.(); unlistenCameraSettings?.(); unlistenCountdownSkip?.(); };
   }, []);
-
-  const skipCountdown = () => {
-    if (countdownTimer.current !== null) window.clearTimeout(countdownTimer.current);
-    countdownTimer.current = null; setCountdown(null); countdownFinish.current?.(); countdownFinish.current = null;
-  };
 
   const displayError = error && !showRecorder && !recording;
   return <>
@@ -630,9 +666,8 @@ export default function RecordingSetupWindow() {
       onClose={() => { setShowRecorder(false); void currentWindow.hide(); }}
       onStart={() => void startRecording()}
     />
-    {countdown !== null && <div className="countdown-overlay"><div className="countdown-card"><span className="eyebrow">GET READY</span><strong>{countdown === 0 ? "Starting…" : countdown}</strong><span>Your recording is about to begin</span><button className="button secondary" onClick={skipCountdown}>Start now</button></div></div>}
     {savingFile && <div className="saving-indicator"><span className="spinner" /> Saving to your configured folder…</div>}
-    {displayError && <div className="toast error-toast"><span>{error}</span><button onClick={() => setError("")} aria-label="Dismiss"><Icon name="close" size={16} /></button></div>}
+    {displayError && <RecordingIssueModal message={error} onDismiss={() => setError("")} />}
     {notice && <div className="toast"><span className="toast-check"><Icon name="check" size={13} /></span>{notice}</div>}
   </>;
 

@@ -10,6 +10,9 @@ Last updated: 2026-11-23
 - The default external save folder is `~/Documents/Recora`; native save/export creates it on demand.
 - Floating camera settings are clamped to monitor work areas; bubble visibility is explicitly applied to the camera window. Positions persist in the shared IndexedDB settings store; Zustand was not added because it would be local to each webview.
 - After successful stop/save, controls stay open in an idle state with a New recording action; the camera bubble remains visible with its camera off. The microphone level meter and glass timer are wired into the control widget, and the setup window uses a transparent backdrop.
+- The floating recorder has separate preparing, recording, saving, and idle layouts. Idle controls include a close action. Dashboard focus dismisses all floating windows, including countdown and annotation.
+- Countdown now has its own transparent floating webview, positioned alongside the recorder and camera widgets during preparation; it can be skipped from that window.
+- Capture failures in the setup window use a modal with a concise explanation, preserved recovery-file path, expandable diagnostics, and a copy-details action.
 - Camera show/hide state carries a monotonic revision to reject delayed events. Annotation window transitions are serialized to avoid overlapping show/hide operations.
 - Native MP4 finalization now waits up to 30 seconds for ScreenCaptureKit's finish callback before checking file stability or duration; the prior 2-second wait silently continued on timeout and could inspect an incomplete segment.
 - Native capture still needs live macOS acceptance (see PROJECT_STATUS).
