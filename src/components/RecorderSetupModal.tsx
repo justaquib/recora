@@ -28,7 +28,7 @@ export default function RecorderSetupModal(props: Props) {
   if (!props.open) return null;
   const { busy, error, captureMode, onCaptureModeChange, cameraEnabled, onCameraEnabledChange, micEnabled, onMicEnabledChange, microphones, cameras, micId, onMicChange, cameraId, onCameraChange, countdownDuration, onCountdownChange, onOpenPrivacySettings, onClose, onStart } = props;
   return <div className="modal-backdrop setup-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}>
-    <div className="recorder-modal" role="dialog" aria-modal="true" aria-labelledby="recorder-heading">
+    <div className="recorder-modal border border-gray-300" role="dialog" aria-modal="true" aria-labelledby="recorder-heading">
       <div className="modal-header"><div className="modal-brand"><span className="brand-mark"><Icon name="logo" size={18} /></span><span>RECORDER</span></div><button className="icon-button" onClick={onClose} disabled={busy} aria-label="Close setup"><Icon name="close" /></button></div>
       <div className="modal-content"><div className="eyebrow">A LITTLE PREPARATION</div><h2 id="recorder-heading">Set up your recording</h2><p className="modal-lede">Choose what to capture. You can start in seconds.</p>
         <div className="mode-switch"><button className={captureMode === "screen" ? "active" : ""} onClick={() => onCaptureModeChange("screen")}><Icon name="monitor" size={18} /> Screen</button><button className={captureMode === "camera" ? "active" : ""} onClick={() => onCaptureModeChange("camera")}><Icon name="camera" size={18} /> Camera only</button></div>

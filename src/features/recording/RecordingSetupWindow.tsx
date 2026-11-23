@@ -69,10 +69,27 @@ export default function RecordingSetupWindow() {
     countdownFinish.current = null;
   };
   useEffect(() => {
+    document.documentElement.classList.add("widget-document");
+    document.body.classList.add("widget-body");
     document.documentElement.style.backgroundColor = "transparent";
     document.body.style.backgroundColor = "transparent";
-    return () => { document.documentElement.style.backgroundColor = ""; document.body.style.backgroundColor = ""; };
+    return () => {
+      document.documentElement.classList.remove("widget-document");
+      document.body.classList.remove("widget-body");
+      document.documentElement.style.backgroundColor = "";
+      document.body.style.backgroundColor = "";
+    };
   }, []);
+  useEffect(() => {
+    if (!showRecorder) return;
+    const resize = () => {
+      const modal = document.querySelector(".recorder-modal") as HTMLElement | null;
+      if (!modal) return;
+      void currentWindow.setSize(new LogicalSize(Math.ceil(modal.offsetWidth), Math.ceil(modal.offsetHeight))).catch(() => undefined);
+    };
+    const timer = window.setTimeout(resize, 60);
+    return () => window.clearTimeout(timer);
+  }, [showRecorder, captureMode, error, cameraEnabled, micEnabled, microphones.length, cameras.length, countdownDuration]);
   const waitForUnmutedTracks = async (stream: MediaStream, deviceName: string) => {
     const deadline = Date.now() + 3500;
     while (stream.getTracks().some((track) => track.muted) && Date.now() < deadline) {
@@ -97,9 +114,9 @@ export default function RecordingSetupWindow() {
   };
   const restoreSetupWindow = async () => {
     await currentWindow.setIgnoreCursorEvents(false).catch(() => undefined);
-    document.documentElement.style.backgroundColor = "";
-    document.body.style.backgroundColor = "";
-    await currentWindow.setSize(new LogicalSize(520, 720)).catch(() => undefined);
+    document.documentElement.style.backgroundColor = "transparent";
+    document.body.style.backgroundColor = "transparent";
+    await currentWindow.setSize(new LogicalSize(472, 560)).catch(() => undefined);
     await currentWindow.center().catch(() => undefined);
     await currentWindow.show().catch(() => undefined);
   };
