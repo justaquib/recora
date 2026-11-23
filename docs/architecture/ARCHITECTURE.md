@@ -17,6 +17,8 @@ The query parameter `?widget=...` selects which React tree is mounted (`src/App.
 
 Each webview has its own JS runtime. Live coordination happens through Tauri events; durable preferences such as widget positions use the shared IndexedDB settings store. A Zustand store would be local to each webview, so it is not used for cross-window persistence.
 
+After successful recording finalization, the recorder controls remain visible in an idle state and can reopen setup for another capture. The camera bubble stays visible with its camera off. During capture, the setup webview meters microphone input and sends level values to the controls webview; the timer is driven by recording state and appears after the widgets are shown.
+
 ## Frontend layers
 
 - `src/pages/` — page composition only.

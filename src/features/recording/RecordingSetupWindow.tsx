@@ -16,6 +16,7 @@ export default function RecordingSetupWindow() {
   const [cameraEnabled, setCameraEnabled] = useState(true);
   const [bubbleVisible, setBubbleVisible] = useState(true);
   const bubbleVisibleRef = useRef(true);
+  const bubbleRevision = useRef(0);
   const [micEnabled, setMicEnabled] = useState(true);
   const micEnabledRef = useRef(micEnabled);
   micEnabledRef.current = micEnabled;
@@ -38,6 +39,8 @@ export default function RecordingSetupWindow() {
   const displayStream = useRef<MediaStream | null>(null);
   const cameraStream = useRef<MediaStream | null>(null);
   const micStream = useRef<MediaStream | null>(null);
+  const meterContext = useRef<AudioContext | null>(null);
+  const meterTimer = useRef<number | null>(null);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const nativeRecordingPath = useRef<string | null>(null);
   const recordingWriteQueue = useRef<Promise<void>>(Promise.resolve());
@@ -57,6 +60,11 @@ export default function RecordingSetupWindow() {
   const countdownFinish = useRef<(() => void) | null>(null);
 
   const currentWindow = getCurrentWindow();
+  useEffect(() => {
+    document.documentElement.style.backgroundColor = "transparent";
+    document.body.style.backgroundColor = "transparent";
+    return () => { document.documentElement.style.backgroundColor = ""; document.body.style.backgroundColor = ""; };
+  }, []);
   const waitForUnmutedTracks = async (stream: MediaStream, deviceName: string) => {
     const deadline = Date.now() + 3500;
     while (stream.getTracks().some((track) => track.muted) && Date.now() < deadline) {
@@ -107,14 +115,14 @@ export default function RecordingSetupWindow() {
       const activePause = paused ? Date.now() - pauseStarted.current : 0;
       const currentElapsed = Math.floor((Date.now() - startTime.current - pausedTotal.current - activePause) / 1000);
       setElapsed(currentElapsed);
-      const status: WidgetStatus = { active: true, ready: true, paused, elapsed: currentElapsed, camera: captureMode === "screen" && cameraEnabled, microphone: micEnabled, microphoneAvailable: captureMode === "screen" || Boolean(micStream.current?.getAudioTracks().length), cameraDeviceId: cameraId, screen: captureMode === "screen", bubble: captureMode === "screen" && bubbleVisibleRef.current };
+      const status: WidgetStatus = { active: true, ready: true, recording: true, paused, elapsed: currentElapsed, camera: captureMode === "screen" && cameraEnabled, microphone: micEnabled, microphoneAvailable: captureMode === "screen" || Boolean(micStream.current?.getAudioTracks().length), cameraDeviceId: cameraId, screen: captureMode === "screen", bubble: captureMode === "screen" && bubbleVisibleRef.current, bubbleRevision: bubbleRevision.current };
       void Promise.all(["camera-bubble", "recording-controls"].map((label) => emitTo(label, "recora:widget-status", status))).catch(() => undefined);
     }, 1000);
     return () => window.clearInterval(timer);
   }, [recording, paused, captureMode, cameraEnabled, cameraId, micEnabled, bubbleVisible]);
   useEffect(() => {
     if (!recording) return;
-    const status: WidgetStatus = { active: true, ready: true, paused, elapsed, camera: captureMode === "screen" && cameraEnabled, microphone: micEnabled, microphoneAvailable: captureMode === "screen" || Boolean(micStream.current?.getAudioTracks().length), cameraDeviceId: cameraId, screen: captureMode === "screen", bubble: captureMode === "screen" && bubbleVisible };
+    const status: WidgetStatus = { active: true, ready: true, recording: true, paused, elapsed, camera: captureMode === "screen" && cameraEnabled, microphone: micEnabled, microphoneAvailable: captureMode === "screen" || Boolean(micStream.current?.getAudioTracks().length), cameraDeviceId: cameraId, screen: captureMode === "screen", bubble: captureMode === "screen" && bubbleVisible, bubbleRevision: bubbleRevision.current };
     void Promise.all(["camera-bubble", "recording-controls"].map((label) => emitTo(label, "recora:widget-status", status))).catch(() => undefined);
   }, [recording, paused, elapsed, captureMode, cameraEnabled, cameraId, micEnabled, bubbleVisible]);
   const showRecordingWidgets = async (showBubble: boolean, hasCamera: boolean, cameraDeviceId: string, microphoneEnabled: boolean, microphoneAvailable: boolean) => {
@@ -142,7 +150,7 @@ export default function RecordingSetupWindow() {
         }
         else await widget.hide();
       }
-      const status: WidgetStatus = { active: true, paused: false, elapsed: 0, camera: hasCamera, microphone: microphoneEnabled, microphoneAvailable, cameraDeviceId, screen: showBubble, bubble: showBubble };
+      const status: WidgetStatus = { active: true, ready: false, recording: false, paused: false, elapsed: 0, camera: hasCamera, microphone: microphoneEnabled, microphoneAvailable, cameraDeviceId, screen: showBubble || hasCamera, bubble: showBubble, bubbleRevision: bubbleRevision.current };
       // A newly shown WebView may still be starting; repeat the idempotent status event briefly.
       for (let attempt = 0; attempt < 5; attempt += 1) {
         await Promise.all(["camera-bubble", "recording-controls", "annotation-overlay"].map((label) => emitTo(label, "recora:widget-status", status)));
@@ -155,7 +163,7 @@ export default function RecordingSetupWindow() {
   };
 
   const hideRecordingWidgets = async () => {
-    const inactive: WidgetStatus = { active: false, paused: false, elapsed: 0, camera: false };
+    const inactive: WidgetStatus = { active: false, ready: false, recording: false, paused: false, elapsed: 0, camera: false, saving: false };
     if (annotationSnapshotKey.current) {
       try { localStorage.removeItem(annotationSnapshotKey.current); } catch { /* optional snapshot cleanup */ }
       annotationSnapshotKey.current = null;
@@ -182,8 +190,28 @@ export default function RecordingSetupWindow() {
   };
 
   const cleanupCapture = () => {
+    if (meterTimer.current !== null) window.clearInterval(meterTimer.current);
+    meterTimer.current = null;
+    void meterContext.current?.close().catch(() => undefined);
+    meterContext.current = null;
     [displayStream.current, cameraStream.current, micStream.current].forEach((stream) => stream?.getTracks().forEach((track) => track.stop()));
     displayStream.current = null; cameraStream.current = null; micStream.current = null;
+  };
+  const startMicrophoneMeter = (stream: MediaStream) => {
+    if (!stream.getAudioTracks().length) return;
+    try {
+      const context = new AudioContext();
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 512;
+      context.createMediaStreamSource(stream).connect(analyser);
+      meterContext.current = context;
+      const samples = new Float32Array(analyser.fftSize);
+      meterTimer.current = window.setInterval(() => {
+        analyser.getFloatTimeDomainData(samples);
+        const rms = Math.sqrt(samples.reduce((sum, sample) => sum + sample * sample, 0) / samples.length);
+        void emitTo("recording-controls", "recora:widget-status", { microphoneLevel: Math.min(1, rms * 7) } satisfies Partial<WidgetStatus>);
+      }, 80);
+    } catch (cause) { console.warn("Could not start the microphone level meter", cause); }
   };
 
   const saveRecording = async (temporaryPath: string, mimeType: string, captureDuration: number, mediaDuration: number | null, sizeBytes: number) => {
@@ -191,7 +219,7 @@ export default function RecordingSetupWindow() {
     try {
       if (sizeBytes < 1024) throw new Error(`No usable media was encoded (${mimeType}, ${formatFileSize(sizeBytes)}). Check that the selected capture source is still active. Recovery file: ${temporaryPath}`);
       setRecording(false); setPaused(false);
-      const savingStatus: WidgetStatus = { active: true, ready: false, paused: false, elapsed: captureDuration, camera: false, saving: true, savingStage: "saving" };
+      const savingStatus: WidgetStatus = { active: true, ready: false, recording: false, paused: false, elapsed: captureDuration, camera: false, saving: true, savingStage: "saving" };
       await Promise.all(["camera-bubble", "recording-controls", "annotation-overlay"].map((label) => emitTo(label, "recora:widget-status", savingStatus)));
       const extension = mimeType.includes("mp4") ? "mp4" : "webm";
       const recordedDuration = mediaDuration ?? captureDuration;
@@ -200,7 +228,6 @@ export default function RecordingSetupWindow() {
         throw new Error(`Recording is incomplete: playable media is ${formatTime(mediaDuration)} but the recorder ran for ${formatTime(captureDuration)}. It was not added to the library. Recovery file: ${temporaryPath}`);
       }
       setSavingFile(true);
-      await hideRecordingWidgets();
       const video: VideoItem = { id: crypto.randomUUID(), title: `Untitled recording ${new Date().toLocaleDateString()}`, createdAt: Date.now(), duration: recordedDuration, captureDuration, sizeBytes, thumbnail: "", mimeType, hasCamera: captureOptions.current.captureMode === "camera" || (captureOptions.current.captureMode === "screen" && captureOptions.current.cameraEnabled) };
       const suggestedName = `${video.title.replace(/[^a-z0-9-_ ]/gi, "").trim() || "recora-recording"}.${extension}`;
       const filePath = await finalizeTemporaryRecordingFile(temporaryPath, suggestedName);
@@ -212,13 +239,15 @@ export default function RecordingSetupWindow() {
       await putVideo(savedVideo);
       saved = true;
       setNotice(externalSaveError ? `Saved in Recora. Could not copy to the selected folder: ${externalSaveError}` : `Saved ${extension.toUpperCase()} recording${saveDirectory.current ? " to your chosen location" : " to Documents/Recora"}`);
-      await emitTo("main", recordingEvents.libraryChanged, { id: video.id });
+      const idleStatus: WidgetStatus = { active: true, ready: false, recording: false, paused: false, elapsed: 0, camera: false, microphone: false, microphoneAvailable: false, cameraDeviceId: cameraId, screen: captureOptions.current.captureMode === "screen", bubble: captureOptions.current.captureMode === "screen" && bubbleVisibleRef.current, bubbleRevision: bubbleRevision.current, saving: false };
+      await Promise.all(["camera-bubble", "recording-controls"].map((label) => emitTo(label, "recora:widget-status", idleStatus)));
+      void emitTo("main", recordingEvents.libraryChanged, { id: video.id }).catch((cause) => console.warn("Could not refresh the library after saving", cause));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The recording could not be finalized.");
       await currentWindow.show().catch(() => undefined);
     } finally {
       await writeSetting("isRecording", false).catch(() => undefined);
-      await hideRecordingWidgets();
+      if (!saved) await hideRecordingWidgets();
       nativeRecordingPath.current = null;
       mediaRecorder.current = null; recordingSession.current = ""; stopRequested.current = false;
       cleanupCapture(); setRecording(false); setPaused(false); setSavingFile(false);
@@ -239,6 +268,10 @@ export default function RecordingSetupWindow() {
       if (captureMode === "screen") {
         const screenPermission = await invoke<boolean>("request_screen_capture_permission");
         if (!screenPermission) throw new Error("macOS Screen Recording access is not enabled for Recora. Enable it under System Settings → Privacy & Security → Screen Recording, then fully quit and reopen Recora.");
+        if (micEnabled) {
+          micStream.current = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: micId ? { exact: micId } : undefined, echoCancellation: true, noiseSuppression: true }, video: false });
+          await waitForUnmutedTracks(micStream.current, "Microphone");
+        }
         nativePath = await createTemporaryRecordingFile(`Recora recording ${Date.now()}.mp4`);
         try {
           await invoke("native_capture_choose_source");
@@ -268,6 +301,10 @@ export default function RecordingSetupWindow() {
           tick(countdownDuration);
         });
       }
+      if (micStream.current) {
+        startMicrophoneMeter(micStream.current);
+        await meterContext.current?.resume().catch(() => undefined);
+      }
       const sessionId = crypto.randomUUID();
       setElapsed(0); latestElapsed.current = 0; pausedTotal.current = 0; stopRequested.current = false;
       setShowRecorder(false); setPaused(false); pausedRef.current = false;
@@ -277,8 +314,8 @@ export default function RecordingSetupWindow() {
         nativeRecordingPath.current = nativePath;
         recordingSession.current = sessionId;
         await writeSetting("isRecording", true);
-        await showRecordingWidgets(true, cameraEnabled, cameraId, micEnabled, true);
         startTime.current = Date.now();
+        await showRecordingWidgets(true, cameraEnabled, cameraId, micEnabled, true);
         setRecording(true);
         await currentWindow.hide();
         return;
@@ -420,7 +457,7 @@ export default function RecordingSetupWindow() {
       active: true, ready: true, paused: pausedRef.current, elapsed: currentElapsed,
       camera: captureOptions.current.captureMode === "screen" && captureOptions.current.cameraEnabled,
       microphone: micEnabledRef.current,
-      cameraDeviceId: cameraId, screen: captureOptions.current.captureMode === "screen", bubble: captureOptions.current.captureMode === "screen" && bubbleVisibleRef.current,
+      cameraDeviceId: cameraId, screen: captureOptions.current.captureMode === "screen", bubble: captureOptions.current.captureMode === "screen" && bubbleVisibleRef.current, bubbleRevision: bubbleRevision.current,
     } satisfies WidgetStatus).catch(() => undefined);
   };
 
@@ -428,6 +465,12 @@ export default function RecordingSetupWindow() {
     const nextEnabled = !micEnabledRef.current;
     if (nativeRecordingPath.current) {
       await invoke("native_capture_set_microphone", { enabled: nextEnabled });
+      if (nextEnabled && !micStream.current) {
+        micStream.current = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: micId ? { exact: micId } : undefined, echoCancellation: true, noiseSuppression: true }, video: false });
+        startMicrophoneMeter(micStream.current);
+        await meterContext.current?.resume().catch(() => undefined);
+      }
+      micStream.current?.getAudioTracks().forEach((track) => { track.enabled = nextEnabled; });
     } else {
       const tracks = micStream.current?.getAudioTracks() ?? [];
       if (!tracks.length) throw new Error("Microphone audio was disabled when this recording started. Start a new recording with microphone enabled to use this control.");
@@ -472,31 +515,40 @@ export default function RecordingSetupWindow() {
     let positionWriteTimer: number | null = null;
     let unlistenAnnotation: (() => void) | undefined;
     let unlistenCameraSettings: (() => void) | undefined;
-    void listen<{ action: "pause" | "stop" | "home" | "microphone" | "bubble" }>("recora:widget-action", async (event) => {
+    void listen<{ action: "pause" | "stop" | "home" | "microphone" | "bubble" | "new" }>("recora:widget-action", async (event) => {
       if (event.payload.action === "pause") togglePause();
       if (event.payload.action === "stop") stopRecording();
       if (event.payload.action === "microphone") void toggleMicrophone().catch((cause) => setNotice(friendlyError(cause)));
       if (event.payload.action === "bubble") {
         const visible = !bubbleVisibleRef.current;
+        bubbleRevision.current += 1;
         bubbleVisibleRef.current = visible;
         setBubbleVisible(visible);
         if (!visible) {
           captureOptions.current = { ...captureOptions.current, cameraEnabled: false };
           setCameraEnabled(false);
         }
-        const cameraBubble = await WebviewWindow.getByLabel("camera-bubble");
-        await emitTo("camera-bubble", "recora:widget-status", {
+        const status: WidgetStatus = {
           active: true,
-          ready: true,
+          ready: !stopRequested.current,
+          recording: Boolean(recordingSession.current) && !stopRequested.current,
           paused: pausedRef.current,
           elapsed: latestElapsed.current,
           camera: visible && captureOptions.current.captureMode === "screen" && captureOptions.current.cameraEnabled,
+          microphone: micEnabledRef.current,
           cameraDeviceId: cameraId,
           screen: captureOptions.current.captureMode === "screen",
           bubble: visible,
-        } satisfies WidgetStatus).catch(() => undefined);
-        if (visible) await cameraBubble?.show().catch(() => undefined);
-        else await cameraBubble?.hide().catch(() => undefined);
+          bubbleRevision: bubbleRevision.current,
+        };
+        await Promise.all(["camera-bubble", "recording-controls"].map((label) => emitTo(label, "recora:widget-status", status))).catch(() => undefined);
+        const cameraWindow = await WebviewWindow.getByLabel("camera-bubble");
+        if (visible) await cameraWindow?.show().catch(() => undefined);
+        else await cameraWindow?.hide().catch(() => undefined);
+      }
+      if (event.payload.action === "new") {
+        setError(""); setShowRecorder(true);
+        await restoreSetupWindow();
       }
       if (event.payload.action === "home") {
         const main = await WebviewWindow.getByLabel("main");

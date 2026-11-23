@@ -35,10 +35,19 @@ The query parameter `?widget=...` selects which Tauri webview is mounted. The da
 - Moved Home into the floating recording controls and removed the separate home window.
 - Added live microphone mute control to the floating recording bar.
 - Added a recorder-bar camera-bubble toggle. Hiding the bubble disables its camera stream; showing it again displays the avatar until the camera is explicitly enabled.
+- Kept the camera bubble and floating controls available after a successful stop. The controls return to an idle state with a New recording action, and the bubble stays visible with the camera off.
+- Made bubble visibility authoritative across the camera and controls webviews so hiding it disables the preview before hiding its window.
+- Added a monotonic camera-bubble visibility revision so delayed status messages cannot undo a recent show/hide click; widget listeners reconcile visibility with the native window state, and button actions apply show/hide directly as well.
+- Serialized annotation show/hide transitions so repeated snapshot/tool events cannot race each other, and status updates only close it on explicit inactive/finalizing states.
+- Preserved the bubble's screen-space center while camera settings expand or collapse, subject to monitor work-area clamping.
+- Added a live microphone level meter, a glass-effect timer shown only once recording begins, and a transparent setup window with a softened backdrop.
+- Fixed post-save widget state reset: idle status explicitly clears `saving`, and library refresh notifications no longer block recorder cleanup.
+- Reconciled requested widget visibility against the native window's actual `isVisible()` state, including windows shown directly during startup, so hide actions are not skipped by stale in-memory visibility flags.
+- Kept microphone level updates out of the high-frequency React widget status render path; level bars update directly so they do not repaint the timer every 80 ms.
 - Replaced live camera filter thumbnails with static avatar previews to avoid opening multiple camera renderers that flicker.
 - Added local library metadata in IndexedDB and on-disk media storage. New recordings write to the app-local `.temp` folder, merge/finalize on disk, then move into app-local `recordings` and copy to the configured save folder. On success, the `.temp` recording and merged native segments are removed. On failure, recovery files remain in `.temp`. Existing IndexedDB video blobs migrate to disk when the library loads.
 - Persisted floating widget positions in the shared IndexedDB settings store for restoration across app restarts.
-- Added monitor work-area checks for the expanded camera settings panel and serialized camera-bubble show/hide operations.
+- Added monitor work-area checks for the expanded camera settings panel and serialized camera-bubble show/hide operations. Edge placement still needs live macOS confirmation.
 - Added a native macOS ScreenCaptureKit path for screen/window selection and frame capture, with direct MP4 recording output on macOS 15+. This replaces WebView display capture after repeated diagnostics showed live but muted tracks and zero encoded bytes.
 - Added native pause/resume timing, finalization, file import, and native frame snapshots for screen annotations.
 - Kept camera-only capture on the WebView MediaRecorder path.
@@ -56,7 +65,7 @@ The WebView screen recorder repeatedly produced a tiny MP4 header and no frames;
 
 The Swift bridge compiles and `cargo check` passes, but live ScreenCaptureKit behavior, file duration, audio, pause/resume, permissions, and stop/finalize are not yet confirmed in a real recording. Do not mark the zero-frame issue fixed until acceptance confirms a playable recording with expected duration and file size. A zero-frame stop returns an explicit native capture error. ScreenCaptureKit microphone capture requires macOS 15; screen capture and the system picker require macOS 14. On macOS 14, microphone must be off for screen capture.
 
-Latest reports: ScreenCaptureKit previously delivered 27 video frames and 73 microphone samples, but AVAssetWriter failed finalization with `AVFoundationErrorDomain -11800`. macOS 15+ uses Apple's `SCRecordingOutput` to write MP4 directly. Stop and pause wait briefly for the finish callback, then verify that the segment file is stable and readable. Stop also compares the measured video-track duration with the active recorder time before joining/importing it. If ScreenCaptureKit stops early or the video timeline is materially shorter, the incomplete video is not added to the library and its recovery segments are kept with diagnostic paths. macOS 14 retains the AVAssetWriter fallback. This duration guard compiles but still needs live capture acceptance before the capture failure is marked resolved.
+Latest reports: ScreenCaptureKit previously delivered 27 video frames and 73 microphone samples, but AVAssetWriter failed finalization with `AVFoundationErrorDomain -11800`. macOS 15+ uses Apple's `SCRecordingOutput` to write MP4 directly. Stop and pause now require the recording-output finish callback (up to 30 seconds) before checking file stability and duration; a stable file before callback completion is not accepted as finalized. Stop also compares the measured video-track duration with the active recorder time before joining/importing it and includes ScreenCaptureKit's reported duration and frame count in mismatch diagnostics. If ScreenCaptureKit stops early or the video timeline is materially shorter, the incomplete video is not added to the library and its recovery segments are kept. macOS 14 retains the AVAssetWriter fallback. These safeguards compile but still need live capture acceptance before the capture failure is marked resolved.
 
 ### P1 — Camera bubble is not composited into screen videos
 
@@ -68,11 +77,11 @@ Frontend/Rust/Swift compilation validate code shape only. They do not validate m
 
 ## Current validation
 
-- `npm run build`: passed with disk-backed media files, metadata-only library persistence, and the latest widget changes.
+- `npm run build`: passed after the floating-widget lifecycle, microphone meter, timer, and setup backdrop changes.
 - `cargo check --offline` from `src-tauri/`: passed with app-local staging, file migration, and save-folder copy commands.
 - `npm run tauri -- build --bundles app --no-sign`: passed with the storage and widget changes; rebuilt `src-tauri/target/release/bundle/macos/Recora.app`.
 - `swiftc -module-cache-path /private/tmp/recora-swift-cache-check -swift-version 5 -typecheck src-tauri/src/native_recorder.swift`: passed after callback fallback and duration guard (existing concurrency and deprecation warnings remain).
-- Live capture, long-duration playback, pause/resume, auto-save, widget edge placement, and restart position restoration: not run in this environment.
+- Live capture, long-duration playback, pause/resume, auto-save, microphone-meter accuracy, widget edge placement, and restart position restoration: not run in this environment.
 
 ## Next work
 

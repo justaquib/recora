@@ -11,7 +11,7 @@ Cross-webview messages are typed and centralized. Do not add ad-hoc event names.
 
 ## Widget status
 
-`WidgetStatus` (in `src/shared/types.ts`) is the shared shape for floating widget state: active, ready, paused, elapsed, camera, saving, screen, bubble.
+`WidgetStatus` (in `src/shared/types.ts`) is the shared shape for floating widget state: active, ready, recording, paused, elapsed, camera, saving, screen, bubble, and a monotonic `bubbleRevision` used to ignore stale visibility updates.
 
 ## Native commands
 

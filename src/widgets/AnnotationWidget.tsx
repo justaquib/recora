@@ -15,6 +15,8 @@ export default function AnnotationWidget() {
   const drawing = useRef(false);
   const strokeStart = useRef<{ x: number; y: number } | null>(null);
   const windowRef = useRef(getCurrentWindow());
+  const toolRevision = useRef(0);
+  const toolQueue = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     document.documentElement.classList.add("widget-document");
@@ -28,21 +30,28 @@ export default function AnnotationWidget() {
       await windowRef.current.setPosition(new LogicalPosition(monitor.position.x / scale, monitor.position.y / scale));
       await windowRef.current.setSize(new LogicalSize(monitor.size.width / scale, monitor.size.height / scale));
     };
-    const applyTool = async (next: AnnotationTool, nextSnapshot?: string) => {
-      setTool(next);
-      void emitTo("recording-controls", "recora:annotation-state", { tool: next === "off" ? "cursor" : next }).catch(() => undefined);
-      if (nextSnapshot) setSnapshot(nextSnapshot);
-      if (next === "cursor" || next === "off") {
-        await windowRef.current.hide().catch(() => undefined);
-        setActive(false);
-        drawing.current = false;
-        setSnapshot(null);
-      } else {
+    const applyTool = (next: AnnotationTool, nextSnapshot?: string) => {
+      const revision = ++toolRevision.current;
+      toolQueue.current = toolQueue.current.catch(() => undefined).then(async () => {
+        if (revision !== toolRevision.current) return;
+        setTool(next);
+        void emitTo("recording-controls", "recora:annotation-state", { tool: next === "off" ? "cursor" : next }).catch(() => undefined);
+        if (nextSnapshot) setSnapshot(nextSnapshot);
+        if (next === "cursor" || next === "off") {
+          await windowRef.current.hide().catch(() => undefined);
+          if (revision !== toolRevision.current) return;
+          setActive(false);
+          drawing.current = false;
+          setSnapshot(null);
+          return;
+        }
         await positionOverlay();
+        if (revision !== toolRevision.current) return;
         await windowRef.current.show().catch((cause) => console.warn("Could not show annotation surface", cause));
-        await windowRef.current.setFocus().catch(() => undefined);
+        if (revision !== toolRevision.current) return;
         setActive(true);
-      }
+      });
+      return toolQueue.current;
     };
     void listen<{ tool: AnnotationTool; snapshot?: string; snapshotKey?: string }>("recora:annotation-tool", (event) => {
       let frame = event.payload.snapshot;
@@ -53,7 +62,7 @@ export default function AnnotationWidget() {
     })
       .then((stop) => { unlistenTool = stop; }).catch((cause) => console.warn("Could not listen for annotation tools", cause));
     void listen<WidgetStatus>("recora:widget-status", (event) => {
-      if (!event.payload.active || event.payload.saving) void applyTool("off");
+      if (event.payload.active === false || event.payload.saving === true) void applyTool("off");
     }).then((stop) => { unlistenStatus = stop; }).catch((cause) => console.warn("Could not listen for recording status", cause));
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") void applyTool("off"); };
     window.addEventListener("keydown", onKeyDown);

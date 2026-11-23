@@ -9,6 +9,9 @@ Last updated: 2026-11-23
 - The library stores metadata in IndexedDB and media files on disk. Capture stages chunks in app-local `.temp`, then moves successful recordings into app-local `recordings` and copies them to the configured folder. Failed finalization retains recovery files.
 - The default external save folder is `~/Documents/Recora`; native save/export creates it on demand.
 - Floating camera settings are clamped to monitor work areas; bubble visibility is explicitly applied to the camera window. Positions persist in the shared IndexedDB settings store; Zustand was not added because it would be local to each webview.
+- After successful stop/save, controls stay open in an idle state with a New recording action; the camera bubble remains visible with its camera off. The microphone level meter and glass timer are wired into the control widget, and the setup window uses a transparent backdrop.
+- Camera show/hide state carries a monotonic revision to reject delayed events. Annotation window transitions are serialized to avoid overlapping show/hide operations.
+- Native MP4 finalization now waits up to 30 seconds for ScreenCaptureKit's finish callback before checking file stability or duration; the prior 2-second wait silently continued on timeout and could inspect an incomplete segment.
 - Native capture still needs live macOS acceptance (see PROJECT_STATUS).
 
 ## Open blockers
@@ -16,6 +19,8 @@ Last updated: 2026-11-23
 - P0: live ScreenCaptureKit capture acceptance (playable duration, audio, pause/resume, stop, save, playback).
 - P1: camera bubble not composited into screen videos.
 - P1: end-to-end capture behavior unverified.
+- P1: bubble anchoring at monitor edges, microphone meter responsiveness, and post-stop restart flow need live macOS acceptance.
+- P0: validate a 45–60 second ScreenCaptureKit recording after the finalization callback change; the recovery file from the latest report contains only about 9 seconds of playable media.
 
 ## Next steps
 

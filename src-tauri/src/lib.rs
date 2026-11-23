@@ -142,11 +142,6 @@ fn open_capture_privacy_settings(section: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
-#[tauri::command]
 fn choose_recording_directory() -> Result<Option<String>, String> {
     #[cfg(target_os = "macos")]
     {
@@ -378,7 +373,7 @@ fn delete_recording_file(path: String) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet, native_capture_choose_source, native_capture_start, native_capture_pause, native_capture_set_microphone, native_capture_stop, native_capture_snapshot, read_recording_file, recording_file_size, request_screen_capture_permission, open_capture_privacy_settings, choose_recording_directory, create_recording_file, write_recording_chunk, create_temporary_recording_file, append_temporary_recording_chunk, finalize_temporary_recording_file, import_recording_file, copy_recording_file, delete_recording_file])
+        .invoke_handler(tauri::generate_handler![native_capture_choose_source, native_capture_start, native_capture_pause, native_capture_set_microphone, native_capture_stop, native_capture_snapshot, read_recording_file, recording_file_size, request_screen_capture_permission, open_capture_privacy_settings, choose_recording_directory, create_recording_file, write_recording_chunk, create_temporary_recording_file, append_temporary_recording_chunk, finalize_temporary_recording_file, import_recording_file, copy_recording_file, delete_recording_file])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

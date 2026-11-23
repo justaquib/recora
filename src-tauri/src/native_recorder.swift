@@ -444,8 +444,11 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             let durationTolerance = max(3, expectedActiveDuration * 0.05)
             if expectedActiveDuration > 0 && actualDuration + durationTolerance < expectedActiveDuration {
                 let recoveryFiles = segmentURLs.map(\.path).joined(separator: ", ")
+                let outputDuration: Double
+                if #available(macOS 15.0, *), let output = activeOutput as? SCRecordingOutput { outputDuration = output.recordedDuration.seconds }
+                else { outputDuration = 0 }
                 resetCaptureState()
-                throw NSError(domain: "RecoraCapture", code: 38, userInfo: [NSLocalizedDescriptionKey: "Recording is incomplete: captured media is \(formattedDuration(actualDuration)) but the recorder ran for \(formattedDuration(expectedActiveDuration)). The incomplete video was not added to Recora. Recovery segments were kept at: \(recoveryFiles)"])
+                throw NSError(domain: "RecoraCapture", code: 38, userInfo: [NSLocalizedDescriptionKey: "Recording is incomplete: finalized video track is \(formattedDuration(actualDuration)), ScreenCaptureKit reported \(formattedDuration(outputDuration)), and the recorder ran for \(formattedDuration(expectedActiveDuration)) across \(frames) screen frames. The incomplete video was not added to Recora. Recovery segments were kept at: \(recoveryFiles)"])
             }
             do {
                 try finalizeRecordingSegments(segmentURLs, destination: URL(fileURLWithPath: destination))
@@ -548,8 +551,11 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 
     @available(macOS 15.0, *)
     private func waitForRecordingOutput(_ output: SCRecordingOutput, at url: URL, callback: DispatchSemaphore) throws {
-        _ = callback.wait(timeout: .now() + 2)
-        let deadline = Date().addingTimeInterval(18)
+        guard callback.wait(timeout: .now() + 30) == .success else {
+            let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.uint64Value ?? 0
+            throw NSError(domain: "RecoraCapture", code: 21, userInfo: [NSLocalizedDescriptionKey: "ScreenCaptureKit did not signal recording finalization within 30 seconds (reported duration: \(formattedDuration(output.recordedDuration.seconds)), reported bytes: \(output.recordedFileSize), file bytes: \(fileSize)). Recovery file: \(url.path)"])
+        }
+        let deadline = Date().addingTimeInterval(12)
         var previousSize: UInt64 = 0
         var stablePolls = 0
         while Date() < deadline {
@@ -571,7 +577,7 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             Thread.sleep(forTimeInterval: 0.3)
         }
         let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.uint64Value ?? 0
-        throw NSError(domain: "RecoraCapture", code: 21, userInfo: [NSLocalizedDescriptionKey: "ScreenCaptureKit did not produce a finalized, readable MP4 segment (reported bytes: \(output.recordedFileSize), file bytes: \(fileSize)). Recovery file: \(url.path)"])
+        throw NSError(domain: "RecoraCapture", code: 21, userInfo: [NSLocalizedDescriptionKey: "ScreenCaptureKit signaled finalization but did not produce a stable, readable MP4 segment (reported duration: \(formattedDuration(output.recordedDuration.seconds)), reported bytes: \(output.recordedFileSize), file bytes: \(fileSize)). Recovery file: \(url.path)"])
     }
 
     private func finalizeRecordingSegments(_ segments: [URL], destination: URL) throws {

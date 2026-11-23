@@ -1,4 +1,5 @@
 .camera-widget-root {
+  position: relative;
   width: 100%;
   height: 100%;
   padding: 0;
@@ -93,11 +94,17 @@
 .camera-action-button:hover { background: rgba(242, 242, 242, .1); }
 .camera-action-button.camera-action-muted { color: #E01A4F; }
 .camera-settings-open { gap: 7px; }
-.camera-settings-open .camera-bubble-area { flex-basis: 247px; }
-.camera-settings-open .camera-widget-frame { width: 196px; height: 196px; }
-.camera-settings-open .camera-widget-frame.camera-frame-large { width: 216px; height: 216px; }
+.camera-settings-open .camera-bubble-area { flex-basis: var(--camera-settings-area-height, 252px); justify-content: flex-start; }
+.camera-settings-open .camera-widget-frame { width: 196px; height: 196px; margin-left: var(--camera-settings-frame-left, 82px); margin-top: calc(var(--camera-settings-frame-top, 5px) - 5px); }
+.camera-settings-open .camera-widget-frame.camera-frame-large { width: 216px; height: 216px; margin-left: calc(var(--camera-settings-frame-left, 82px) - 10px); margin-top: calc(var(--camera-settings-frame-top, 5px) - 15px); }
+.camera-settings-open .camera-bubble-actions { top: var(--camera-settings-controls-top, 211px); bottom: auto; }
+.camera-settings-open:has(.camera-frame-large) .camera-bubble-area { flex-basis: calc(var(--camera-settings-area-height, 252px) + 20px); }
+.camera-settings-open:has(.camera-frame-large) .camera-bubble-actions { top: calc(var(--camera-settings-controls-top, 211px) + 20px); }
 
 .camera-settings-panel {
+  position: absolute;
+  top: var(--camera-settings-panel-top, 252px);
+  left: var(--camera-settings-panel-left, 14px);
   width: 332px;
   max-height: var(--camera-settings-panel-max-height, 365px);
   overflow-y: auto;
@@ -109,6 +116,7 @@
   box-shadow: 0 12px 35px rgba(26, 26, 26, .42);
   user-select: none;
 }
+.camera-settings-open:has(.camera-frame-large) .camera-settings-panel { top: var(--camera-settings-panel-large-top, 272px); }
 
 .camera-settings-header { height: 26px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
 .camera-settings-header strong { font-size: 13px; font-weight: 650; }
@@ -155,12 +163,18 @@
 .controls-widget { width: 100%; height: 100%; display: flex; align-items: center; justify-content: space-between; gap: 9px; padding: 0 13px; border: 1px solid rgba(242, 242, 242, .14); border-radius: 27px; background: #1A1A1A; box-shadow: 0 9px 30px rgba(26, 26, 26, .36); }
 .widget-drag-grip { width: 11px; flex: 0 0 auto; color: rgba(242, 242, 242, .42); font-size: 18px; line-height: 1; cursor: grab; }
 .widget-time { min-width: 43px; color: #F2F2F2; font-size: 12px; font-variant-numeric: tabular-nums; }
+.widget-time.glass-timer { min-width: 48px; padding: 6px 9px; border: 1px solid rgba(242, 242, 242, .16); border-radius: 16px; background: rgba(242, 242, 242, .1); color: #F2F2F2; text-align: center; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); box-shadow: inset 0 1px rgba(242, 242, 242, .08); }
 .controls-widget .widget-divider { height: 28px; margin: 0 2px; background: rgba(242, 242, 242, .16); }
 .controls-widget .widget-control { width: 34px; height: 34px; flex: 0 0 auto; border: 0; border-radius: 50%; background: transparent; color: #F2F2F2; box-shadow: none; }
 .controls-widget .widget-control:hover { background: rgba(242, 242, 242, .11); transform: none; }
 .controls-widget .stop-widget { width: 38px; height: 38px; background: #E01A4F; color: #F2F2F2; }
 .controls-widget .stop-widget:hover { background: #E01A4F; filter: brightness(1.08); }
 .controls-widget .microphone-widget.is-muted { color: #E01A4F; background: rgba(224, 26, 79, .12); }
+.controls-widget .microphone-widget { width: 52px; position: relative; display: flex; align-items: center; justify-content: center; gap: 3px; }
+.audio-level-bars { height: 17px; display: flex; align-items: center; gap: 1px; }
+.audio-level-bars i { width: 2px; height: 13px; border-radius: 2px; background: #4C8DF1; transform-origin: center; transition: transform 70ms linear; }
+.controls-widget .new-recording-widget { background: #4C8DF1; color: #F2F2F2; }
+.controls-widget .new-recording-widget:hover { background: #4C8DF1; }
 .controls-widget .camera-bubble-toggle.selected { color: #4C8DF1; background: rgba(76, 141, 241, .14); }
 .controls-widget .widget-control:disabled { opacity: .45; cursor: wait; }
 .controls-widget .annotate-toggle.selected { background: #4C8DF1; color: #F2F2F2; }

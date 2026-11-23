@@ -21,11 +21,16 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
   const [cameraError, setCameraError] = useState("");
   const settingsOpenRef = useRef(false);
   const shown = useRef(false);
+  const settingsPositionOffsetX = useRef(0);
+  const settingsPositionOffsetY = useRef(0);
+  const settingsBubbleCenterX = useRef(0);
+  const settingsBubbleCenterY = useRef(0);
   const statusRef = useRef(status);
   const elapsedBase = useRef(0);
   const runStartedAt = useRef(0);
   const elapsedRef = useRef(0);
   const cameraPreview = useRef<HTMLVideoElement>(null);
+  const audioBars = useRef<HTMLSpanElement>(null);
   const widgetCameraStream = useRef<MediaStream | null>(null);
   const visibilityRevision = useRef(0);
   const visibilityQueue = useRef<Promise<void>>(Promise.resolve());
@@ -42,10 +47,11 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
       const revision = ++visibilityRevision.current;
       const shouldShow = kind === "controls"
         ? next.active
-        : next.active && !next.saving && (next.bubble ?? next.camera);
+        : next.active && (next.bubble ?? next.camera);
       visibilityQueue.current = visibilityQueue.current.catch(() => undefined).then(async () => {
         if (revision !== visibilityRevision.current) return;
         try {
+          shown.current = await current.isVisible();
           if (shouldShow && !shown.current) { await current.show(); shown.current = true; }
           else if (!shouldShow && shown.current) { await current.hide(); shown.current = false; }
         } catch (cause) { console.warn(`Could not ${shouldShow ? "show" : "hide"} widget`, cause); }
@@ -53,8 +59,21 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
     };
     void listen<WidgetStatus>("recora:widget-status", (event) => {
       const next = event.payload;
+      if (typeof next.microphoneLevel === "number" && Object.keys(next).length === 1) {
+        const level = Math.max(0, Math.min(1, next.microphoneLevel));
+        audioBars.current?.querySelectorAll("i").forEach((bar, index) => {
+          const base = [0.45, 0.72, 1, 0.65, 0.38][index] ?? 0.5;
+          (bar as HTMLElement).style.transform = `scaleY(${Math.max(.12, Math.min(1, base * (0.2 + level * 2.2)))})`;
+        });
+        return;
+      }
       const previous = statusRef.current;
-      if (next.active && !previous.active) {
+      if (next.active && next.recording && !previous.recording) {
+        elapsedBase.current = next.elapsed;
+        elapsedRef.current = next.elapsed;
+        setWidgetElapsed(next.elapsed);
+        runStartedAt.current = Date.now();
+      } else if (next.active && !previous.active) {
         elapsedBase.current = next.elapsed;
         elapsedRef.current = next.elapsed;
         setWidgetElapsed(next.elapsed);
@@ -71,14 +90,33 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
         elapsedRef.current = 0;
         setWidgetElapsed(0);
       }
-      const merged = { ...previous, ...next, cameraFilter: next.cameraFilter ?? previous.cameraFilter ?? "original", cameraBlur: next.cameraBlur ?? previous.cameraBlur ?? false, avatar: next.avatar ?? previous.avatar ?? AVATARS[0] };
+      const currentBubbleRevision = previous.bubbleRevision ?? 0;
+      const acceptsBubbleState = next.bubbleRevision === undefined || next.bubbleRevision >= currentBubbleRevision;
+      const merged = {
+        ...previous,
+        ...next,
+        saving: next.saving ?? (next.recording === false || next.active === false ? false : previous.saving),
+        savingStage: next.saving === false ? undefined : next.savingStage ?? previous.savingStage,
+        bubble: acceptsBubbleState ? next.bubble ?? previous.bubble : previous.bubble,
+        camera: acceptsBubbleState ? next.camera ?? previous.camera : previous.camera,
+        bubbleRevision: Math.max(currentBubbleRevision, next.bubbleRevision ?? 0),
+        cameraFilter: next.cameraFilter ?? previous.cameraFilter ?? "original",
+        cameraBlur: next.cameraBlur ?? previous.cameraBlur ?? false,
+        avatar: next.avatar ?? previous.avatar ?? AVATARS[0],
+      };
       statusRef.current = merged;
       setStatus(merged);
       updateVisibility(merged);
     }).then((stop) => { unlistenStatus = stop; }).catch((cause) => console.warn("Could not listen for widget status", cause));
     const label = kind === "camera" ? "camera-bubble" : "recording-controls";
     void current.onMoved(({ payload }) => {
-      void current.scaleFactor().then((scale) => emitTo("recording-setup", "recora:widget-moved", { label, x: payload.x + (kind === "camera" && settingsOpenRef.current ? Math.round(60 * scale) : 0), y: payload.y })).catch(() => undefined);
+      void current.scaleFactor().then((scale) => {
+        if (kind === "camera" && settingsOpenRef.current) {
+          settingsBubbleCenterX.current = payload.x + Math.round(120 * scale) + settingsPositionOffsetX.current;
+          settingsBubbleCenterY.current = payload.y + Math.round(106 * scale) + settingsPositionOffsetY.current;
+        }
+        return emitTo("recording-setup", "recora:widget-moved", { label, x: payload.x + (kind === "camera" && settingsOpenRef.current ? settingsPositionOffsetX.current : 0), y: payload.y + (kind === "camera" && settingsOpenRef.current ? settingsPositionOffsetY.current : 0) });
+      }).catch(() => undefined);
     }).then((stop) => { unlistenMoved = stop; }).catch((cause) => console.warn("Could not persist widget position", cause));
     if (kind === "controls") void listen<{ tool: AnnotationTool }>("recora:annotation-state", (event) => setActiveTool(event.payload.tool))
       .then((stop) => { unlistenAnnotation = stop; }).catch((cause) => console.warn("Could not sync annotation tools", cause));
@@ -117,7 +155,7 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
   }, [kind, status.active, status.camera, status.cameraDeviceId]);
 
   useEffect(() => {
-    if (kind !== "controls" || !status.active || status.paused || status.saving) return;
+    if (kind !== "controls" || !status.active || !status.recording || status.paused || status.saving) return;
     const tick = () => {
       const current = elapsedBase.current + Math.floor((Date.now() - runStartedAt.current) / 1000);
       elapsedRef.current = current;
@@ -126,9 +164,9 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
     tick();
     const timer = window.setInterval(tick, 250);
     return () => window.clearInterval(timer);
-  }, [kind, status.active, status.paused, status.saving]);
+  }, [kind, status.active, status.recording, status.paused, status.saving]);
 
-  const sendAction = (action: "pause" | "stop" | "home" | "microphone" | "bubble") => {
+  const sendAction = (action: "pause" | "stop" | "home" | "microphone" | "bubble" | "new") => {
     if (statusRef.current.saving) return;
     if (action === "stop" && kind === "controls") {
       if (!statusRef.current.ready) return;
@@ -174,26 +212,47 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
         const position = await current.outerPosition();
         const monitors = await availableMonitors();
         const centerX = position.x + Math.round(120 * scale);
-        const centerY = position.y + Math.round(130 * scale);
+        const centerY = position.y + Math.round(106 * scale);
         const monitor = monitors.find((item) => centerX >= item.position.x && centerX <= item.position.x + item.size.width && centerY >= item.position.y && centerY <= item.position.y + item.size.height);
         const workArea = monitor?.workArea;
         const width = CAMERA_SETTINGS_SIZE.width * scale;
         const height = Math.min(CAMERA_SETTINGS_SIZE.height, (workArea?.size.height ?? CAMERA_SETTINGS_SIZE.height * scale) / scale) * scale;
-        const desiredX = position.x - Math.round(60 * scale);
         const desiredY = position.y;
+        const desiredX = centerX - Math.round(width / 2);
         const x = workArea ? Math.max(workArea.position.x, Math.min(desiredX, workArea.position.x + workArea.size.width - width)) : desiredX;
         const y = workArea ? Math.max(workArea.position.y, Math.min(desiredY, workArea.position.y + workArea.size.height - height)) : desiredY;
-        document.documentElement.style.setProperty("--camera-settings-panel-max-height", `${Math.max(180, height / scale - 260)}px`);
+        const frameLeft = (centerX - x) / scale - 98;
+        const frameTop = (centerY - y) / scale - 98;
+        const belowSpace = workArea ? (workArea.position.y + workArea.size.height - centerY) / scale - 143 : height / scale - frameTop - 247;
+        const aboveSpace = frameTop - 8;
+        const panelBelow = belowSpace >= 180 || aboveSpace < 180;
+        const panelMaxHeight = Math.max(120, Math.min(365, panelBelow ? belowSpace : aboveSpace));
+        const panelTop = panelBelow ? frameTop + 247 : Math.max(0, frameTop - panelMaxHeight - 8);
+        document.documentElement.style.setProperty("--camera-settings-panel-max-height", `${panelMaxHeight}px`);
+        document.documentElement.style.setProperty("--camera-settings-panel-top", `${panelTop}px`);
+        document.documentElement.style.setProperty("--camera-settings-panel-large-top", `${panelTop + (panelBelow ? 20 : 0)}px`);
+        document.documentElement.style.setProperty("--camera-settings-frame-left", `${frameLeft}px`);
+        document.documentElement.style.setProperty("--camera-settings-frame-top", `${frameTop}px`);
+        document.documentElement.style.setProperty("--camera-settings-area-height", `${frameTop + 252}px`);
+        document.documentElement.style.setProperty("--camera-settings-controls-top", `${frameTop + 211}px`);
+        document.documentElement.style.setProperty("--camera-settings-panel-left", `${Math.max(0, Math.min(14, CAMERA_SETTINGS_SIZE.width - 346))}px`);
+        settingsPositionOffsetX.current = centerX - x - Math.round((CAMERA_CLOSED_SIZE.width / 2) * scale);
+        settingsPositionOffsetY.current = centerY - y - Math.round(106 * scale);
+        settingsBubbleCenterX.current = centerX;
+        settingsBubbleCenterY.current = centerY;
         settingsOpenRef.current = true;
         await current.setSize(new LogicalSize(CAMERA_SETTINGS_SIZE.width, height / scale));
         await current.setPosition(new PhysicalPosition(Math.round(x), Math.round(y)));
         setSettingsOpen(true);
       } else {
-        const position = await current.outerPosition();
         settingsOpenRef.current = false;
         await current.setSize(CAMERA_CLOSED_SIZE);
-        await current.setPosition(new PhysicalPosition(position.x + Math.round(60 * scale), position.y));
-        document.documentElement.style.removeProperty("--camera-settings-panel-max-height");
+        const closedDesiredX = settingsBubbleCenterX.current - Math.round((CAMERA_CLOSED_SIZE.width / 2) * scale);
+        const closedDesiredY = settingsBubbleCenterY.current - Math.round(106 * scale);
+        await current.setPosition(new PhysicalPosition(closedDesiredX, closedDesiredY));
+        ["--camera-settings-panel-max-height", "--camera-settings-panel-top", "--camera-settings-panel-large-top", "--camera-settings-frame-left", "--camera-settings-frame-top", "--camera-settings-area-height", "--camera-settings-controls-top", "--camera-settings-panel-left"].forEach((property) => document.documentElement.style.removeProperty(property));
+        settingsPositionOffsetX.current = 0;
+        settingsPositionOffsetY.current = 0;
         setSettingsOpen(false);
         setAvatarPickerOpen(false);
       }
@@ -253,13 +312,12 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
         <div className="widget-saving-copy"><strong>{status.savingStage === "finalizing" ? "FINALIZING RECORDING" : "SAVING RECORDING"}</strong><small>{status.savingStage === "finalizing" ? "Please wait while the video is prepared" : "Please wait while your video is saved"}</small></div>
       </div> : <>
         <div className="widget-drag-grip" aria-hidden="true">⠿</div>
-        <button className="widget-control stop-widget" disabled={!status.ready} onClick={() => sendAction("stop")} aria-label="Stop recording" title="Stop recording"><Icon name="stop" size={14} /></button>
-        <span className="widget-time">{formatTime(widgetElapsed)}</span>
-        <div className="widget-divider" />
+        <button className={`widget-control stop-widget ${status.recording ? "" : "new-recording-widget"}`} disabled={status.saving} onClick={() => sendAction(status.recording ? "stop" : "new")} aria-label={status.recording ? "Stop recording" : "Start a new recording"} title={status.recording ? "Stop recording" : "Start a new recording"}><Icon name={status.recording ? "stop" : "plus"} size={14} /></button>
+        {status.recording && <><span className="widget-time glass-timer">{formatTime(widgetElapsed)}</span><div className="widget-divider" />
         <button className="widget-control pause-widget" disabled={!status.ready} onClick={() => sendAction("pause")} aria-label={status.paused ? "Resume recording" : "Pause recording"} title={status.paused ? "Resume" : "Pause"}><Icon name={status.paused ? "play" : "pause"} size={16} /></button>
-        <button className={`widget-control microphone-widget ${status.microphone ? "" : "is-muted"}`} disabled={!status.ready || !status.microphoneAvailable} onClick={() => sendAction("microphone")} aria-label={status.microphone ? "Mute microphone" : "Unmute microphone"} title={status.microphone ? "Mute microphone" : status.microphoneAvailable ? "Unmute microphone" : "Microphone was unavailable when recording started"}><Icon name={status.microphone ? "mic" : "micOff"} size={16} /></button>
-        <button className={`widget-control camera-bubble-toggle ${status.bubble ? "selected" : ""}`} disabled={!status.ready || !status.screen} onClick={() => sendAction("bubble")} aria-label={status.bubble ? "Hide camera bubble and turn off camera" : "Show camera bubble"} title={status.bubble ? "Hide camera bubble and turn off camera" : "Show camera bubble"}><Icon name={status.bubble ? "camera" : "cameraOff"} size={16} /></button>
-        <button className={`widget-control tool-widget annotate-toggle ${activeTool !== "cursor" ? "selected" : ""}`} disabled={!status.screen} onClick={() => void toggleAnnotation(activeTool === "cursor" ? "pen" : "cursor")} aria-label={activeTool === "cursor" ? "Open annotation tools" : "Return to cursor mode"} title={activeTool === "cursor" ? "Annotate" : "Cursor mode"}><Icon name="pen" size={16} /></button>
+        <button className={`widget-control microphone-widget ${status.microphone ? "" : "is-muted"}`} disabled={!status.ready || !status.microphoneAvailable} onClick={() => sendAction("microphone")} aria-label={status.microphone ? "Mute microphone" : "Unmute microphone"} title={status.microphone ? "Mute microphone" : status.microphoneAvailable ? "Unmute microphone" : "Microphone was unavailable when recording started"}><Icon name={status.microphone ? "mic" : "micOff"} size={16} />{status.microphone && <span className="audio-level-bars" ref={audioBars} aria-hidden="true">{[0.45, 0.72, 1, 0.65, 0.38].map((_, index) => <i key={index} style={{ transform: "scaleY(.2)" }} />)}</span>}</button></>}
+        <button className={`widget-control camera-bubble-toggle ${status.bubble ? "selected" : ""}`} disabled={status.saving || !status.screen} onClick={() => sendAction("bubble")} aria-label={status.bubble ? "Hide camera bubble and turn off camera" : "Show camera bubble"} title={status.bubble ? "Hide camera bubble and turn off camera" : "Show camera bubble"}><Icon name={status.bubble ? "camera" : "cameraOff"} size={16} /></button>
+        {status.recording && <button className={`widget-control tool-widget annotate-toggle ${activeTool !== "cursor" ? "selected" : ""}`} disabled={!status.screen} onClick={() => void toggleAnnotation(activeTool === "cursor" ? "pen" : "cursor")} aria-label={activeTool === "cursor" ? "Open annotation tools" : "Return to cursor mode"} title={activeTool === "cursor" ? "Annotate" : "Cursor mode"}><Icon name="pen" size={16} /></button>}
         <button className="widget-control home-widget-button" onClick={() => sendAction("home")} aria-label="Open Recora library" title="Open Recora library"><Icon name="home" size={17} /></button>
       </>}
     </div>
