@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSCameraUsageDescription</key>
+  <string>Recora uses your camera to add a picture-in-picture camera bubble to your recordings.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Recora uses your microphone to record your voice with your videos.</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>Recora captures the screen or window you choose for your recording.</string>
+</dict>
+</plist>
