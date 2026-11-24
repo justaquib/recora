@@ -39,30 +39,43 @@ export default function RecordingDetailPage({ video, previewVideo, renaming, dra
 
     {optionsOpen && <div className="detail-options-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setOptionsOpen(false); }}>
       <aside className="detail-options-drawer" aria-label="Recording options">
-        <header className="detail-options-header"><strong>Recording options</strong><button className="icon-button" onClick={() => setOptionsOpen(false)} aria-label="Close options"><Icon name="close" size={16} /></button></header>
+        <header className="detail-options-header">
+          <div className="detail-options-heading">
+            <span className="detail-options-eyebrow">LIBRARY ITEM</span>
+            <strong>Recording options</strong>
+          </div>
+          <button className="icon-button" onClick={() => setOptionsOpen(false)} aria-label="Close options"><Icon name="close" size={16} /></button>
+        </header>
+        <div className="detail-options-summary">
+          <div className="detail-options-summary-icon"><Icon name="video" size={17} /></div>
+          <div><strong>{video.title}</strong><span>{formatTime(video.duration)} <i /> {formatFileSize(video.sizeBytes)} <i /> {(video.mimeType || "video/mp4").includes("mp4") ? "MP4" : "WebM"}</span></div>
+        </div>
         <section className="detail-options-section">
-          <h3>Title</h3>
+          <h3><span className="detail-options-section-number">01</span> Details</h3>
+          <label className="detail-options-field-label">Recording title</label>
           <div className="detail-options-title-row">
             {editingTitle ? <input className="title-input" autoFocus value={draftTitleLocal} onChange={(event) => setDraftTitleLocal(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { onRename(draftTitleLocal); setEditingTitle(false); } if (event.key === "Escape") setEditingTitle(false); }} onBlur={() => { onRename(draftTitleLocal); setEditingTitle(false); }} /> : <><span className="detail-options-title">{video.title}</span><button className="icon-button" onClick={() => { setDraftTitleLocal(video.title); setEditingTitle(true); }} aria-label="Rename" title="Rename"><Icon name="pen" size={14} /></button></>}
           </div>
         </section>
         <section className="detail-options-section">
-          <h3>Thumbnail</h3>
-          {video.thumbnail ? <img className="detail-thumbnail-preview" src={video.thumbnail} alt="Recording thumbnail" /> : <div className="detail-thumbnail-empty">No thumbnail</div>}
-          <button className="button secondary" onClick={() => fileInputRef.current?.click()}><Icon name="video" size={16} /> Choose thumbnail</button>
+          <h3><span className="detail-options-section-number">02</span> Cover image</h3>
+          {video.thumbnail ? <img className="detail-thumbnail-preview" src={video.thumbnail} alt="Recording thumbnail" /> : <div className="detail-thumbnail-empty"><Icon name="video" size={19} /><span>No cover image selected</span></div>}
+          <button className="button secondary detail-options-action" onClick={() => fileInputRef.current?.click()}><Icon name="video" size={15} /> Choose image</button>
           <input ref={fileInputRef} type="file" accept="image/*" hidden onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => { if (typeof reader.result === "string") onAddThumbnail(reader.result); }; reader.readAsDataURL(file); event.target.value = ""; }} />
         </section>
         <section className="detail-options-section">
-          <h3>Convert to MP4</h3>
+          <h3><span className="detail-options-section-number">03</span> Convert format</h3>
+          <p className="detail-options-description">Create an MP4 copy with your preferred quality.</p>
           <label className="detail-slider-label"><span>Quality</span><span>{["Low", "Medium", "High"][convertQuality]}</span></label>
           <input type="range" min={0} max={2} step={1} value={convertQuality} onChange={(event) => setConvertQuality(Number(event.target.value))} aria-label="Convert quality" />
-          <button className="button secondary" disabled={converting} onClick={async () => { setConverting(true); try { await onConvert(["low", "medium", "high"][convertQuality]); } finally { setConverting(false); } }}><Icon name="download" size={16} /> {converting ? "Converting..." : "Convert"}</button>
+          <button className="button secondary detail-options-action" disabled={converting} onClick={async () => { setConverting(true); try { await onConvert(["low", "medium", "high"][convertQuality]); } finally { setConverting(false); } }}><Icon name="download" size={15} /> {converting ? "Converting..." : "Convert to MP4"}</button>
         </section>
         <section className="detail-options-section">
-          <h3>Noise cancellation</h3>
+          <h3><span className="detail-options-section-number">04</span> Audio cleanup</h3>
+          <p className="detail-options-description">Reduce background noise in the recording audio.</p>
           <label className="detail-slider-label"><span>Level</span><span>{["Low", "Medium", "High"][denoiseLevel]}</span></label>
           <input type="range" min={0} max={2} step={1} value={denoiseLevel} onChange={(event) => setDenoiseLevel(Number(event.target.value))} aria-label="Noise cancellation level" />
-          <button className="button secondary" disabled={applyingDenoise} onClick={async () => { setApplyingDenoise(true); try { await onDenoise(["low", "medium", "high"][denoiseLevel]); } finally { setApplyingDenoise(false); } }}><Icon name="mic" size={16} /> {applyingDenoise ? "Processing..." : "Apply to video"}</button>
+          <button className="button secondary detail-options-action" disabled={applyingDenoise} onClick={async () => { setApplyingDenoise(true); try { await onDenoise(["low", "medium", "high"][denoiseLevel]); } finally { setApplyingDenoise(false); } }}><Icon name="mic" size={15} /> {applyingDenoise ? "Processing..." : "Reduce background noise"}</button>
         </section>
       </aside>
     </div>}
