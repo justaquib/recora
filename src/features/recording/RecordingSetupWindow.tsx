@@ -15,6 +15,7 @@ import { appendBlobToTemporaryFile, copyRecordingFile, createTemporaryRecordingF
 
 export default function RecordingSetupWindow() {
   const [captureMode, setCaptureMode] = useState<CaptureMode>("screen");
+  const [audioSampleRate, setAudioSampleRate] = useState(48000);
   const [cameraEnabled, setCameraEnabled] = useState(true);
   const cameraEnabledRef = useRef(cameraEnabled);
   cameraEnabledRef.current = cameraEnabled;
@@ -136,6 +137,7 @@ export default function RecordingSetupWindow() {
       setCameraEnabled(value.cameraEnabled);
       setMicEnabled(value.micEnabled);
       setCountdownDuration(value.countdownDuration);
+      if (value.audioSampleRate) setAudioSampleRate(value.audioSampleRate);
     }).catch((cause) => console.warn("Could not load recording preferences", cause));
     void loadDevices();
     let unlistenSettings: (() => void) | undefined;
@@ -149,6 +151,7 @@ export default function RecordingSetupWindow() {
       setCountdownDuration(event.payload.countdownDuration);
       if (event.payload.micId !== undefined) setMicId(event.payload.micId);
       if (event.payload.cameraId !== undefined) setCameraId(event.payload.cameraId);
+      if (event.payload.audioSampleRate !== undefined) setAudioSampleRate(event.payload.audioSampleRate);
     }).then((stop) => { unlistenPreferences = stop; }).catch((cause) => console.warn("Could not sync recording preferences", cause));
     return () => { unlistenSettings?.(); unlistenPreferences?.(); };
   }, []);
@@ -257,7 +260,7 @@ export default function RecordingSetupWindow() {
     const selectedMic = saved?.micId && mics.some((device) => device.deviceId === saved.micId) ? saved.micId : mics[0]?.deviceId || "";
     const selectedCamera = saved?.cameraId && cams.some((device) => device.deviceId === saved.cameraId) ? saved.cameraId : cams[0]?.deviceId || "";
     setMicId(selectedMic); setCameraId(selectedCamera);
-    await persistRecordingPreferences({ ...saved, captureMode: saved?.captureMode ?? captureMode, cameraEnabled: cams.length > 0 && (saved?.cameraEnabled ?? cameraEnabled), micEnabled: saved?.micEnabled ?? micEnabled, countdownDuration: saved?.countdownDuration ?? countdownDuration, micId: selectedMic, cameraId: selectedCamera, microphones: mics, cameras: cams });
+    await persistRecordingPreferences({ ...saved, captureMode: saved?.captureMode ?? captureMode, cameraEnabled: cams.length > 0 && (saved?.cameraEnabled ?? cameraEnabled), micEnabled: saved?.micEnabled ?? micEnabled, countdownDuration: saved?.countdownDuration ?? countdownDuration, audioSampleRate, micId: selectedMic, cameraId: selectedCamera, microphones: mics, cameras: cams });
   };
 
   const cleanupCapture = () => {
@@ -341,7 +344,7 @@ export default function RecordingSetupWindow() {
         const screenPermission = await invoke<boolean>("request_screen_capture_permission");
         if (!screenPermission) throw new Error("macOS Screen Recording access is not enabled for Recodex. Enable it under System Settings → Privacy & Security → Screen Recording, then fully quit and reopen Recodex.");
         if (micEnabled) {
-          micStream.current = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: micId ? { exact: micId } : undefined, echoCancellation: true, noiseSuppression: true }, video: false });
+          micStream.current = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: micId ? { exact: micId } : undefined, echoCancellation: true, noiseSuppression: true, sampleRate: audioSampleRate, channelCount: 1 }, video: false });
           await waitForUnmutedTracks(micStream.current, "Microphone");
         }
         nativePath = await createTemporaryRecordingFile(`Recodex recording ${Date.now()}.mp4`);
@@ -358,7 +361,7 @@ export default function RecordingSetupWindow() {
         await waitForUnmutedTracks(videoSource, "Camera");
         cameraStream.current = videoSource;
         if (micEnabled) {
-          micStream.current = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: micId ? { exact: micId } : undefined, echoCancellation: true, noiseSuppression: true }, video: false });
+          micStream.current = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: micId ? { exact: micId } : undefined, echoCancellation: true, noiseSuppression: true, sampleRate: audioSampleRate, channelCount: 1 }, video: false });
           await waitForUnmutedTracks(micStream.current, "Microphone");
         }
       }
@@ -392,7 +395,7 @@ export default function RecordingSetupWindow() {
       const sessionId = crypto.randomUUID();
 
       if (nativePath) {
-        await invoke("native_capture_start", { path: nativePath, microphone: micEnabled });
+        await invoke("native_capture_start", { path: nativePath, microphone: micEnabled, sampleRate: audioSampleRate });
         nativeRecordingPath.current = nativePath;
         recordingSession.current = sessionId;
         await writeSetting("isRecording", true);

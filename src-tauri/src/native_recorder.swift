@@ -102,7 +102,7 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         }
     }
 
-    func start(path: String, microphone: Bool) throws {
+    func start(path: String, microphone: Bool, sampleRate: Int) throws {
         lock.lock()
         guard let filter = selectedFilter else {
             lock.unlock()
@@ -134,7 +134,7 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         config.capturesAudio = false
         if #available(macOS 15.0, *) {
             config.captureMicrophone = microphone
-            config.sampleRate = 48_000
+            config.sampleRate = sampleRate
             config.channelCount = 2
         }
 
@@ -747,9 +747,9 @@ public func recodexCaptureChooseSource() -> UnsafeMutablePointer<CChar>? {
 }
 
 @_cdecl("recodex_capture_start")
-public func recodexCaptureStart(_ path: UnsafePointer<CChar>, _ microphone: Int32) -> UnsafeMutablePointer<CChar>? {
+public func recodexCaptureStart(_ path: UnsafePointer<CChar>, _ microphone: Int32, _ sampleRate: Int32) -> UnsafeMutablePointer<CChar>? {
     let filePath = String(cString: path)
-    return nativeError { try NativeRecorder.shared.start(path: filePath, microphone: microphone != 0) }
+    return nativeError { try NativeRecorder.shared.start(path: filePath, microphone: microphone != 0, sampleRate: Int(sampleRate)) }
 }
 
 @_cdecl("recodex_capture_pause")

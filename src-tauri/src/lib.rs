@@ -2,7 +2,7 @@
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn recodex_capture_choose_source() -> *mut std::ffi::c_char;
-    fn recodex_capture_start(path: *const std::ffi::c_char, microphone: i32) -> *mut std::ffi::c_char;
+    fn recodex_capture_start(path: *const std::ffi::c_char, microphone: i32, sample_rate: i32) -> *mut std::ffi::c_char;
     fn recodex_capture_pause(paused: i32) -> *mut std::ffi::c_char;
     fn recodex_capture_set_microphone(enabled: i32) -> *mut std::ffi::c_char;
     fn recodex_capture_stop(expected_active_duration_seconds: f64) -> *mut std::ffi::c_char;
@@ -31,12 +31,12 @@ async fn native_capture_choose_source() -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn native_capture_start(path: String, microphone: bool) -> Result<(), String> {
+async fn native_capture_start(path: String, microphone: bool, sample_rate: i32) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         let path = std::ffi::CString::new(path).map_err(|_| "Recording path contains an invalid character")?;
         return tauri::async_runtime::spawn_blocking(move || unsafe {
-            native_capture_result(recodex_capture_start(path.as_ptr(), i32::from(microphone)))
+            native_capture_result(recodex_capture_start(path.as_ptr(), i32::from(microphone), sample_rate))
         }).await.map_err(|error| format!("Native recorder failed to start: {error}"))?;
     }
     #[cfg(not(target_os = "macos"))]
@@ -342,7 +342,7 @@ fn ffmpeg_binary() -> &'static str {
 }
 
 #[tauri::command]
-fn export_recording_file(source_path: String, directory: Option<String>, suggested_name: String, quality: String, thumbnail_bytes: Vec<u8>) -> Result<String, String> {
+fn export_recording_file(source_path: String, directory: Option<String>, suggested_name: String, quality: String, thumbnail_bytes: Vec<u8>, audio_bitrate: Option<i32>) -> Result<String, String> {
     use std::{env, fs, process::Command, path::PathBuf};
     let source = PathBuf::from(&source_path);
     if !source.exists() {
@@ -357,11 +357,13 @@ fn export_recording_file(source_path: String, directory: Option<String>, suggest
         .and_then(|value| value.to_str())
         .unwrap_or("recodex-recording");
     let destination = unique_recording_path(&destination_directory, &format!("{stem}.mp4"))?;
-    let (crf, preset, audio_bitrate) = match quality.as_str() {
-        "high" => ("18", "slow", "192k"),
-        "low" => ("28", "fast", "96k"),
-        _ => ("23", "medium", "128k"),
+    let (crf, preset) = match quality.as_str() {
+        "high" => ("18", "slow"),
+        "low" => ("28", "fast"),
+        _ => ("23", "medium"),
     };
+    let audio_bitrate = audio_bitrate.unwrap_or(128000);
+    let audio_bitrate_arg = format!("{}k", (audio_bitrate / 1000).max(32));
     let thumbnail_path = if thumbnail_bytes.is_empty() {
         None
     } else {
@@ -375,6 +377,8 @@ fn export_recording_file(source_path: String, directory: Option<String>, suggest
         Command::new(ffmpeg_binary())
             .args([
                 "-y",
+                "-threads",
+                "2",
                 "-i",
                 source.to_str().ok_or("Recording path contains an invalid character")?,
                 "-i",
@@ -394,7 +398,7 @@ fn export_recording_file(source_path: String, directory: Option<String>, suggest
                 "-c:a",
                 "aac",
                 "-b:a",
-                audio_bitrate,
+                &audio_bitrate_arg,
                 "-c:v:1",
                 "copy",
                 "-disposition:v:1",
@@ -420,7 +424,7 @@ fn export_recording_file(source_path: String, directory: Option<String>, suggest
                 "-c:a",
                 "aac",
                 "-b:a",
-                audio_bitrate,
+                &audio_bitrate_arg,
                 "-movflags",
                 "+faststart",
                 destination.to_str().ok_or("Export path contains an invalid character")?,
@@ -455,6 +459,8 @@ fn estimate_export_size(source_path: String, quality: String) -> Result<u64, Str
     let output = Command::new(ffmpeg_binary())
         .args([
             "-y",
+            "-threads",
+            "2",
             "-i",
             source.to_str().ok_or("Recording path contains an invalid character")?,
             "-c:v",
@@ -507,6 +513,8 @@ fn embed_thumbnail_in_video(source_path: String, thumbnail_bytes: Vec<u8>, in_pl
     let output = Command::new(ffmpeg_binary())
         .args([
             "-y",
+            "-threads",
+            "2",
             "-i",
             source.to_str().ok_or("Recording path contains an invalid character")?,
             "-i",
@@ -573,6 +581,8 @@ fn denoise_recording(source_path: String, level: String, in_place: bool) -> Resu
     let extract = Command::new(ffmpeg_binary())
         .args([
             "-y",
+            "-threads",
+            "2",
             "-i",
             source.to_str().ok_or("Recording path contains an invalid character")?,
             "-vn",

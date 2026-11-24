@@ -9,13 +9,19 @@ export async function generateVideoThumbnail(path: string, mimeType: string): Pr
     video.src = url;
     video.muted = true;
     video.playsInline = true;
+    video.preload = "auto";
     await new Promise<void>((resolve, reject) => {
       video.onloadedmetadata = () => resolve();
       video.onerror = () => reject(new Error("video load failed"));
     });
     const seekTime = Number.isFinite(video.duration) && video.duration > 1 ? Math.min(video.duration / 2, 5) : 0.5;
     video.currentTime = seekTime;
-    await new Promise<void>((resolve) => { video.onseeked = () => window.setTimeout(resolve, 120); });
+    await new Promise<void>((resolve) => { video.onseeked = () => resolve(); });
+    if (typeof (video as any).requestVideoFrameCallback === "function") {
+      await new Promise<void>((resolve) => { (video as any).requestVideoFrameCallback(() => resolve()); });
+    } else {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 300));
+    }
     const canvas = document.createElement("canvas");
     canvas.width = video.videoWidth || 640;
     canvas.height = video.videoHeight || 360;

@@ -29,6 +29,10 @@ function MainShell() {
   const { videos, setVideos, query, setQuery, sortOrder, setSortOrder, view, setView, saveDirectory, setSaveDirectory, error, setError, notice, setNotice, renaming, setRenaming, draftTitle, setDraftTitle, confirmDelete, setConfirmDelete } = store;
   const [denoisePreview, setDenoisePreview] = useState<string | null>(null);
   const [denoisePreviewUrl, setDenoisePreviewUrl] = useState<string | null>(null);
+  const [convertPreview, setConvertPreview] = useState<string | null>(null);
+  const [convertPreviewUrl, setConvertPreviewUrl] = useState<string | null>(null);
+  const [lastConvertQuality, setLastConvertQuality] = useState<"low" | "medium" | "high" | null>(null);
+  const [backgroundTask, setBackgroundTask] = useState<string | null>(null);
 
   const searchInput = useRef<HTMLInputElement>(null);
   const previewVideo = useRef<HTMLVideoElement>(null);
@@ -37,8 +41,8 @@ function MainShell() {
     try {
       const loaded = await readVideos();
       setVideos(loaded);
-      const backfillAll = !localStorage.getItem("thumbnail-backfill-v2");
-      if (backfillAll) localStorage.setItem("thumbnail-backfill-v2", "1");
+      const backfillAll = !localStorage.getItem("thumbnail-backfill-v3");
+      if (backfillAll) localStorage.setItem("thumbnail-backfill-v3", "1");
       void Promise.all(loaded.filter((video) => video.filePath && (backfillAll || !video.thumbnail)).map(async (video) => {
         const thumbnail = await generateVideoThumbnail(video.filePath as string, video.mimeType || "video/mp4");
         if (!thumbnail) return;
@@ -111,6 +115,18 @@ function MainShell() {
     }).catch(() => undefined);
     return () => { cancelled = true; if (url) URL.revokeObjectURL(url); };
   }, [denoisePreview]);
+
+  useEffect(() => {
+    if (!convertPreview) { setConvertPreviewUrl((url) => { if (url) URL.revokeObjectURL(url); return null; }); return; }
+    let cancelled = false;
+    let url: string | null = null;
+    void readRecordingBlob(convertPreview, "video/mp4").then((blob) => {
+      if (cancelled) return;
+      url = URL.createObjectURL(blob);
+      setConvertPreviewUrl(url);
+    }).catch(() => undefined);
+    return () => { cancelled = true; if (url) URL.revokeObjectURL(url); };
+  }, [convertPreview]);
 
   const filtered = useMemo(() => videos
     .filter((video) => video.title.toLowerCase().includes(query.toLowerCase()))
@@ -186,17 +202,6 @@ function MainShell() {
     } catch { setError("Could not delete this recording. Please try again."); }
   };
 
-  const exportSelected = async (quality: "high" | "standard" | "low" = "standard") => {
-    if (!selected) return;
-    try {
-      const filePath = await invoke<string>("export_recording_file", { sourcePath: selected.filePath || "", directory: saveDirectory || null, suggestedName: `${selected.title.replace(/[^a-z0-9-_ ]/gi, "").trim() || "recodex-recording"}-${quality}.mp4`, quality, thumbnailBytes: selected.thumbnail ? Array.from(dataUrlToBytes(selected.thumbnail)) : [] });
-      const updated = { ...selected, filePath: selected.filePath || filePath, filePaths: [...new Set([...(selected.filePaths || (selected.filePath ? [selected.filePath] : [])), filePath])] };
-      await putVideo(updated);
-      setVideos(videos.map((item) => item.id === updated.id ? updated : item));
-      setNotice(`Exported (${quality} quality): ${filePath}`);
-    } catch (cause) { setError(cause instanceof Error ? `Export could not be saved. ${cause.message}` : "Export could not be saved."); }
-  };
-
   const addCustomThumbnail = async (imageDataUrl: string) => {
     if (!selected) return;
     try {
@@ -215,14 +220,64 @@ function MainShell() {
 
   const denoiseSelected = async (level: "low" | "medium" | "high") => {
     if (!selected) return;
+    setBackgroundTask(`Denoising recording (${level})`);
     try {
       const filePath = await invoke<string>("denoise_recording", { sourcePath: selected.filePath || "", level, inPlace: false });
       setDenoisePreview(filePath);
     } catch (cause) { setError(cause instanceof Error ? `Could not denoise recording. ${cause.message}` : "Could not denoise recording."); }
+    finally { setBackgroundTask(null); }
+  };
+
+  const convertSelected = async (quality: "low" | "medium" | "high") => {
+    if (!selected) return;
+    setLastConvertQuality(quality);
+    setBackgroundTask(`Converting video (${quality})`);
+    try {
+      const filePath = await invoke<string>("export_recording_file", { sourcePath: selected.filePath || "", directory: saveDirectory || null, suggestedName: `${selected.title.replace(/[^a-z0-9-_ ]/gi, "").trim() || "recodex-recording"}-${quality}.mp4`, quality, thumbnailBytes: selected.thumbnail ? Array.from(dataUrlToBytes(selected.thumbnail)) : [], audioBitrate: recordingPreferences.audioBitrate || 128000 });
+      setConvertPreview(filePath);
+    } catch (cause) { setError(cause instanceof Error ? `Could not convert recording. ${cause.message}` : "Could not convert recording."); }
+    finally { setBackgroundTask(null); }
+  };
+
+  const approveConvert = async () => {
+    if (!selected || !convertPreview) return;
+    setBackgroundTask("Replacing with converted video");
+    try {
+      await invoke("delete_recording_file", { path: selected.filePath || "" });
+      const size = await invoke<number>("recording_file_size", { path: convertPreview });
+      const updated = { ...selected, filePath: convertPreview, filePaths: [convertPreview], sizeBytes: size, mimeType: "video/mp4", converted: true, convertedQuality: lastConvertQuality || undefined };
+      await putVideo(updated);
+      setVideos(videos.map((item) => item.id === updated.id ? updated : item));
+      setConvertPreview(null);
+      setConvertPreviewUrl((url) => { if (url) URL.revokeObjectURL(url); return null; });
+      setNotice("Recording replaced with converted version");
+    } catch (cause) { setError(cause instanceof Error ? `Could not replace recording. ${cause.message}` : "Could not replace recording."); }
+    finally { setBackgroundTask(null); }
+  };
+
+  const keepBothConvert = async () => {
+    if (!selected || !convertPreview) return;
+    try {
+      const size = await invoke<number>("recording_file_size", { path: convertPreview });
+      const newVideo = { ...selected, id: crypto.randomUUID(), title: `${selected.title} (Converted)`, filePath: convertPreview, filePaths: [convertPreview], sizeBytes: size, mimeType: "video/mp4", converted: true, convertedQuality: lastConvertQuality || undefined, createdAt: Date.now() };
+      await putVideo(newVideo);
+      setVideos([...videos, newVideo]);
+      setConvertPreview(null);
+      setConvertPreviewUrl((url) => { if (url) URL.revokeObjectURL(url); return null; });
+      setNotice("Converted copy saved to library");
+    } catch (cause) { setError(cause instanceof Error ? `Could not save converted copy. ${cause.message}` : "Could not save converted copy."); }
+  };
+
+  const discardConvert = async () => {
+    if (!convertPreview) return;
+    try { await invoke("delete_recording_file", { path: convertPreview }); } catch { /* ignore */ }
+    setConvertPreview(null);
+    setConvertPreviewUrl((url) => { if (url) URL.revokeObjectURL(url); return null; });
   };
 
   const approveDenoise = async () => {
     if (!selected || !denoisePreview) return;
+    setBackgroundTask("Replacing with denoised recording");
     try {
       await invoke("delete_recording_file", { path: selected.filePath || "" });
       const size = await invoke<number>("recording_file_size", { path: denoisePreview });
@@ -233,6 +288,7 @@ function MainShell() {
       setDenoisePreviewUrl((url) => { if (url) URL.revokeObjectURL(url); return null; });
       setNotice("Recording replaced with denoised version");
     } catch (cause) { setError(cause instanceof Error ? `Could not replace recording. ${cause.message}` : "Could not replace recording."); }
+    finally { setBackgroundTask(null); }
   };
 
   const keepBothDenoise = async () => {
@@ -267,7 +323,7 @@ function MainShell() {
         <Routes>
           <Route path="/" element={<LibraryPage videos={videos} filtered={filtered.slice(0, 3)} query={query} showToolbar={false} onQueryChange={setQuery} searchInput={searchInput} sortOrder={sortOrder} onSortChange={setSortOrder} view={view} onViewChange={setView} onNewRecording={() => void openRecorder()} onOpenVideo={(video) => navigate(`/recordings/${video.id}`)} />} />
           <Route path="/recording" element={<RecordingPage videos={videos} filtered={filtered} query={query} onQueryChange={setQuery} searchInput={searchInput} sortOrder={sortOrder} onSortChange={setSortOrder} view={view} onViewChange={setView} onOpenVideo={(video) => navigate(`/recordings/${video.id}`)} />} />
-          <Route path="/recordings/:id" element={<RecordingDetailRoute videos={videos} previewVideo={previewVideo} renaming={renaming} draftTitle={draftTitle} onDraftTitleChange={setDraftTitle} onStartRename={() => { if (selected) { setDraftTitle(selected.title); setRenaming(true); } }} onCancelRename={() => setRenaming(false)} onUpdateTitle={() => void updateTitle()} onExport={(quality: string) => void exportSelected(quality as "high" | "standard" | "low")} onAddThumbnail={(imageDataUrl: string) => void addCustomThumbnail(imageDataUrl)} onDenoise={(level: string) => void denoiseSelected(level as "low" | "medium" | "high")} onRename={(title: string) => void renameSelected(title)} onDelete={() => setConfirmDelete(true)} onBack={() => navigate("/")} />} />
+          <Route path="/recordings/:id" element={<RecordingDetailRoute videos={videos} previewVideo={previewVideo} renaming={renaming} draftTitle={draftTitle} onDraftTitleChange={setDraftTitle} onStartRename={() => { if (selected) { setDraftTitle(selected.title); setRenaming(true); } }} onCancelRename={() => setRenaming(false)} onUpdateTitle={() => void updateTitle()} onAddThumbnail={(imageDataUrl: string) => void addCustomThumbnail(imageDataUrl)} onDenoise={(level: string) => void denoiseSelected(level as "low" | "medium" | "high")} onConvert={(quality: string) => void convertSelected(quality as "low" | "medium" | "high")} onRename={(title: string) => void renameSelected(title)} onDelete={() => setConfirmDelete(true)} onBack={() => navigate("/")} />} />
           <Route path="/account" element={<AccountPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/preferences" element={<PreferencesPage saveDirectory={saveDirectory} recordingPreferences={recordingPreferences} onChooseSaveDirectory={() => void chooseSaveDirectory()} onResetSaveDirectory={() => void resetSaveDirectory()} onRecordingPreferencesChange={(preferences) => void updateRecordingPreferences(preferences)} />} />
@@ -276,18 +332,20 @@ function MainShell() {
         </Routes>
       </main>
       {denoisePreview && selected && <div className="detail-options-backdrop" role="presentation"><aside className="detail-options-drawer" aria-label="Denoise preview"><header className="detail-options-header"><strong>Preview denoised recording</strong><button className="icon-button" onClick={() => void discardDenoise()} aria-label="Close preview"><Icon name="close" size={16} /></button></header><p>Review the denoised version before replacing the original.</p>{denoisePreviewUrl && <video src={denoisePreviewUrl} controls style={{ width: "100%", borderRadius: 8 }} />}<div className="confirm-actions" style={{ marginTop: 16 }}><button className="button secondary" onClick={() => void discardDenoise()}>Discard</button><button className="button secondary" onClick={() => void keepBothDenoise()}>Keep both</button><button className="button primary" onClick={() => void approveDenoise()}>Replace original</button></div></aside></div>}
+      {convertPreview && selected && <div className="detail-options-backdrop" role="presentation"><aside className="detail-options-drawer" aria-label="Convert preview"><header className="detail-options-header"><strong>Preview converted recording</strong><button className="icon-button" onClick={() => void discardConvert()} aria-label="Close preview"><Icon name="close" size={16} /></button></header><p>Review the converted version before replacing the original.</p>{convertPreviewUrl && <video src={convertPreviewUrl} controls style={{ width: "100%", borderRadius: 8 }} />}<div className="confirm-actions" style={{ marginTop: 16 }}><button className="button secondary" onClick={() => void discardConvert()}>Discard</button><button className="button secondary" onClick={() => void keepBothConvert()}>Keep both</button><button className="button primary" onClick={() => void approveConvert()}>Replace original</button></div></aside></div>}
       {confirmDelete && selected && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setConfirmDelete(false); }}><div className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-heading"><div className="delete-icon"><Icon name="trash" size={19} /></div><h2 id="delete-heading">Delete this recording?</h2><p><strong>{selected.title}</strong> and its saved video file will be deleted from this device. This cannot be undone.</p><div className="confirm-actions"><button className="button secondary" onClick={() => setConfirmDelete(false)}>Cancel</button><button className="button delete-confirm" onClick={() => void deleteSelected()}>Delete recording</button></div></div></div>}
       {error && <div className="toast error-toast"><span>{error}</span><button onClick={() => setError("")} aria-label="Dismiss"><Icon name="close" size={16} /></button></div>}
       {notice && <div className="toast"><span className="toast-check"><Icon name="check" size={13} /></span>{notice}</div>}
+      {backgroundTask && <div className="toast export-toast"><div className="export-toast-text"><strong>Working</strong><span>{backgroundTask}</span></div><div className="export-progress-track"><div className="export-progress-bar export-progress-indeterminate" /></div></div>}
     </div>
   );
 }
 
-function RecordingDetailRoute({ videos, previewVideo, renaming, draftTitle, onDraftTitleChange, onStartRename, onCancelRename, onUpdateTitle, onExport, onAddThumbnail, onDenoise, onRename, onDelete, onBack }: any) {
+function RecordingDetailRoute({ videos, previewVideo, renaming, draftTitle, onDraftTitleChange, onStartRename, onCancelRename, onUpdateTitle, onAddThumbnail, onDenoise, onConvert, onRename, onDelete, onBack }: any) {
   const { id } = useParams();
   const video = videos.find((item: VideoItem) => item.id === id);
   if (!video) return <Navigate to="/" replace />;
-  return <RecordingDetailPage video={video} previewVideo={previewVideo} renaming={renaming} draftTitle={draftTitle} onDraftTitleChange={onDraftTitleChange} onStartRename={onStartRename} onCancelRename={onCancelRename} onUpdateTitle={onUpdateTitle} onExport={onExport} onAddThumbnail={onAddThumbnail} onDenoise={onDenoise} onRename={onRename} onDelete={onDelete} onBack={onBack} />;
+  return <RecordingDetailPage video={video} previewVideo={previewVideo} renaming={renaming} draftTitle={draftTitle} onDraftTitleChange={onDraftTitleChange} onStartRename={onStartRename} onCancelRename={onCancelRename} onUpdateTitle={onUpdateTitle} onAddThumbnail={onAddThumbnail} onDenoise={onDenoise} onConvert={onConvert} onRename={onRename} onDelete={onDelete} onBack={onBack} />;
 }
 
 export default function MainApp() {

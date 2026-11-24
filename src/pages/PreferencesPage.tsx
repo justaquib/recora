@@ -63,6 +63,11 @@ export default function PreferencesPage({ saveDirectory, recordingPreferences, o
           <div className="settings-info-row"><div className="settings-info-icon"><Icon lucide={Camera} size={15} /><span><strong>Floating camera bubble</strong><small>Open the camera bubble without recording</small></span></div><button className="button secondary" onClick={() => void toggleCameraBubble()}>Open / Close</button></div>
         </div>
         <div className="settings-panel mt-3">
+          <div className="settings-device-row"><div><strong>Audio sample rate</strong><small>Recording microphone sample rate</small></div><select aria-label="Audio sample rate" value={recordingPreferences.audioSampleRate || 48000} onChange={(event) => onRecordingPreferencesChange({ ...recordingPreferences, audioSampleRate: Number(event.target.value) })}><option value={44100}>44.1 kHz</option><option value={48000}>48 kHz</option></select></div>
+          <div className="settings-divider" />
+          <div className="settings-device-row"><div><strong>Audio bitrate</strong><small>Export audio bitrate</small></div><select aria-label="Audio bitrate" value={recordingPreferences.audioBitrate || 128000} onChange={(event) => onRecordingPreferencesChange({ ...recordingPreferences, audioBitrate: Number(event.target.value) })}><option value={64000}>64 kbps</option><option value={128000}>128 kbps</option><option value={192000}>192 kbps</option></select></div>
+        </div>
+        <div className="settings-panel mt-3">
           <div className="settings-row settings-save-row"><div className="settings-row-icon"><Icon lucide={Folder} size={16} /></div><div className="settings-row-copy"><strong>Save location</strong><span title={savePath}>{savePath}</span></div><div className="settings-row-actions"><button className="button secondary" onClick={onChooseSaveDirectory}>Change folder</button>{saveDirectory && <button className="settings-reset" onClick={onResetSaveDirectory} title="Use the default folder" aria-label="Use the default save folder"><Icon lucide={RotateCcw} size={15} /></button>}</div></div>
           <div className="settings-divider" /><div className="settings-default-note">New recordings and exports use this folder. The default is <strong>Documents/Recodex</strong>.</div>
         </div>
