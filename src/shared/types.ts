@@ -17,7 +17,7 @@ export type VideoItem = {
 };
 export type Source = { deviceId: string; label: string };
 export type CaptureMode = "screen" | "camera";
-export type RecordingPreferences = { captureMode: CaptureMode; cameraEnabled: boolean; micEnabled: boolean; countdownDuration: number; micId?: string; cameraId?: string; microphones?: Source[]; cameras?: Source[]; audioSampleRate?: number; audioBitrate?: number };
+export type RecordingPreferences = { captureMode: CaptureMode; cameraEnabled: boolean; micEnabled: boolean; countdownDuration: number; micId?: string; cameraId?: string; microphones?: Source[]; cameras?: Source[]; audioSampleRate?: number; audioBitrate?: number; audioEchoCancellation?: boolean; audioNoiseSuppression?: boolean };
 export type CameraFilter = "original" | "warm" | "mono";
 export type WidgetStatus = { active: boolean; ready?: boolean; recording?: boolean; preparing?: boolean; paused: boolean; elapsed: number; camera: boolean; microphone?: boolean; microphoneLevel?: number; microphoneAvailable?: boolean; cameraDeviceId?: string; cameraFilter?: CameraFilter; cameraBlur?: boolean; avatar?: string; saving?: boolean; savingStage?: "finalizing" | "saving"; screen?: boolean; bubble?: boolean; bubbleRevision?: number };
 export type AnnotationTool = "cursor" | "pen" | "eraser" | "circle" | "square" | "arrow" | "off";
