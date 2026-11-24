@@ -201,3 +201,12 @@
 .widget-preparing-state { width: 100%; display: flex; align-items: center; gap: 11px; }
 .preparing-spinner { width: 17px; height: 17px; border: 2px solid rgba(242, 242, 242, .16); border-top-color: #4C8DF1; border-radius: 50%; animation: recodex-save-spin .8s linear infinite; }
 @keyframes widget-rec-pulse { 50% { box-shadow: 0 0 0 6px rgba(224, 26, 79, .08); } }
+
+.camera-ring-colors { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 0; }
+.camera-ring-color { width: 24px; height: 24px; border-radius: 50%; border: 2px solid rgba(242,242,242,.35); cursor: pointer; }
+.camera-ring-color.selected { border-color: #F2F2F2; transform: scale(1.08); }
+.camera-ring-thickness-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; }
+.camera-ring-thickness-row > div { display: flex; flex-direction: column; gap: 2px; }
+.camera-ring-thickness-row strong { font-size: 10px; }
+.camera-ring-thickness-row small { font-size: 9px; color: rgba(242,242,242,.6); }
+.camera-ring-thickness-row input { width: 120px; accent-color: #4C8DF1; }

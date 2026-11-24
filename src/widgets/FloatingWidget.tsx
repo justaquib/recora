@@ -19,6 +19,16 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
   const [cameraLarge, setCameraLarge] = useState(false);
+  useEffect(() => {
+    const syncPinned = () => {
+      if (localStorage.getItem("camera-bubble-open") !== "true") return;
+      void getCurrentWindow().show().catch(() => undefined);
+    };
+    window.addEventListener("storage", syncPinned);
+    return () => window.removeEventListener("storage", syncPinned);
+  }, []);
+  const [ringColor, setRingColor] = useState(() => localStorage.getItem("camera-ring-color") || "#4C8DF1");
+  const [ringThickness, setRingThickness] = useState(() => Number(localStorage.getItem("camera-ring-thickness")) || 4);
   const [cameraError, setCameraError] = useState("");
   const settingsOpenRef = useRef(false);
   const shown = useRef(false);
@@ -27,6 +37,16 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
   const settingsBubbleCenterX = useRef(0);
   const settingsBubbleCenterY = useRef(0);
   const statusRef = useRef(status);
+  useEffect(() => { localStorage.setItem("camera-ring-color", ringColor); }, [ringColor]);
+  useEffect(() => { localStorage.setItem("camera-ring-thickness", String(ringThickness)); }, [ringThickness]);
+  useEffect(() => {
+    const handler = (event: StorageEvent) => {
+      if (event.key === "camera-ring-color" && event.newValue) setRingColor(event.newValue);
+      if (event.key === "camera-ring-thickness" && event.newValue) setRingThickness(Number(event.newValue));
+    };
+    window.addEventListener("storage", handler);
+    return () => window.removeEventListener("storage", handler);
+  }, []);
   const elapsedBase = useRef(0);
   const runStartedAt = useRef(0);
   const elapsedRef = useRef(0);
@@ -46,9 +66,10 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
     let unlistenAnnotation: (() => void) | undefined;
     const updateVisibility = (next: WidgetStatus) => {
       const revision = ++visibilityRevision.current;
+      const pinned = localStorage.getItem("camera-bubble-open") === "true";
       const shouldShow = kind === "controls"
         ? next.active
-        : next.active && (next.bubble ?? next.camera);
+        : pinned || (next.active && (next.bubble ?? next.camera));
       visibilityQueue.current = visibilityQueue.current.catch(() => undefined).then(async () => {
         if (revision !== visibilityRevision.current) return;
         try {
@@ -128,7 +149,8 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
   }, [kind]);
 
   useEffect(() => {
-    if (kind !== "camera" || !status.active || !status.camera) return;
+    const pinned = localStorage.getItem("camera-bubble-open") === "true";
+    if (kind !== "camera" || (!status.active && !pinned) || !status.camera) return;
     let cancelled = false;
     const video = cameraPreview.current;
     const videoConstraints: MediaTrackConstraints = status.cameraDeviceId ? { deviceId: { exact: status.cameraDeviceId }, width: 640, height: 640 } : { width: 640, height: 640 };
@@ -279,7 +301,7 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
     const avatar = status.avatar || AVATARS[0];
     return <div className={`floating-root camera-widget-root ${settingsOpen ? "camera-settings-open" : ""}`} onMouseDown={beginDrag}>
       <div className="camera-bubble-area">
-        <div className={`camera-widget-frame ${filterClass} ${cameraLarge ? "camera-frame-large" : ""}`} data-tauri-drag-region="true" title="Drag to move camera">
+        <div className={`camera-widget-frame ${filterClass} ${cameraLarge ? "camera-frame-large" : ""}`} data-tauri-drag-region="true" title="Drag to move camera" style={{ borderColor: ringColor, borderWidth: ringThickness, borderStyle: "solid" }}>
           {status.camera && status.active
             ? <video ref={cameraPreview} autoPlay playsInline muted style={{ filter: videoFilter }} />
             : <div className="camera-widget-placeholder"><div className="camera-avatar">{avatar}</div><span>Camera off</span></div>}
@@ -307,6 +329,13 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
         </div>
         <div className="camera-settings-divider" />
         <div className="camera-blur-row"><div><strong>Blur background</strong><small>Apply a soft blur to the preview</small></div><button role="switch" aria-checked={Boolean(status.cameraBlur)} className={`camera-settings-switch ${status.cameraBlur ? "on" : ""}`} onClick={() => updateCameraSetting({ cameraBlur: !status.cameraBlur })}><i /></button></div>
+        <div className="camera-settings-divider" />
+        <div className="camera-panel-section-heading"><span>Ring color</span><small>{ringColor}</small></div>
+        <div className="camera-ring-colors">
+          {["#4C8DF1", "#E01A4F", "#10B981", "#F59E0B", "#8B5CF6", "#FFFFFF", "#000000", "#F2F2F2"].map((color) => <button key={color} className={`camera-ring-color ${ringColor === color ? "selected" : ""}`} style={{ background: color }} onClick={() => setRingColor(color)} aria-label={`Use ${color} ring color`} />)}
+        </div>
+        <div className="camera-settings-divider" />
+        <div className="camera-ring-thickness-row"><div><strong>Ring thickness</strong><small>{ringThickness}px</small></div><input type="range" min={1} max={12} value={ringThickness} onChange={(event) => setRingThickness(Number(event.target.value))} aria-label="Ring thickness" /></div>
         <div className="camera-settings-divider" />
         <button className="camera-avatar-option" onClick={() => setAvatarPickerOpen((open) => !open)} aria-expanded={avatarPickerOpen}><span className="camera-avatar-option-icon">{avatar}</span><span><strong>Choose avatar</strong><small>Use an avatar instead of video</small></span><Icon name="chevronRight" size={16} /></button>
         {avatarPickerOpen && <div className="camera-avatar-grid">{AVATARS.map((item) => <button key={item} className={avatar === item ? "selected" : ""} onClick={() => { updateCameraSetting({ avatar: item, camera: false }); setAvatarPickerOpen(false); }} aria-label={`Choose ${item} avatar`}>{item}</button>)}</div>}
