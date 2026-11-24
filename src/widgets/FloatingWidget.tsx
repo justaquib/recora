@@ -12,6 +12,89 @@ import type { AnnotationTool, CameraFilter, Source, WidgetStatus } from "../shar
 const CAMERA_CLOSED_SIZE = new LogicalSize(240, 260);
 const CAMERA_SETTINGS_SIZE = new LogicalSize(360, 624);
 const AVATARS = ["🙂", "👩🏻‍💻", "👨🏽‍💻", "🧑🏼‍🎨", "🦊", "🚀"];
+const BUBBLE_GRADIENTS = [
+  { id: "gradient-aurora", label: "Aurora", css: "radial-gradient(circle at 18% 78%, rgba(76,141,241,.9) 0%, rgba(76,141,241,.2) 32%, transparent 48%), radial-gradient(circle at 78% 22%, rgba(224,26,79,.82) 0%, rgba(224,26,79,.25) 28%, transparent 48%), linear-gradient(135deg, #F2F2F2 0%, #E7EDFF 58%, #F8EDF2 100%)" },
+  { id: "gradient-blue", label: "Blue", css: "radial-gradient(circle at 76% 18%, rgba(242,242,242,.95) 0%, transparent 36%), linear-gradient(135deg, #1A1A1A 0%, #4C8DF1 100%)" },
+  { id: "gradient-pink", label: "Pink", css: "radial-gradient(circle at 22% 78%, rgba(242,242,242,.82) 0%, transparent 38%), linear-gradient(135deg, #E01A4F 0%, #F2F2F2 100%)" },
+  { id: "gradient-ink", label: "Ink", css: "radial-gradient(circle at 72% 20%, rgba(76,141,241,.62) 0%, transparent 38%), linear-gradient(135deg, #1A1A1A 0%, #4C8DF1 100%)" },
+  { id: "gradient-dawn", label: "Dawn", css: "radial-gradient(circle at 78% 22%, rgba(224,26,79,.48) 0%, transparent 42%), linear-gradient(135deg, #F2F2F2 0%, #F2F2F2 48%, #4C8DF1 100%)" },
+  { id: "gradient-mono", label: "Mono", css: "radial-gradient(circle at 30% 70%, rgba(242,242,242,.16) 0%, transparent 38%), linear-gradient(135deg, #1A1A1A 0%, #F2F2F2 100%)" },
+] as const;
+
+const fillBubbleGradient = (context: CanvasRenderingContext2D, gradientId: string) => {
+  const width = 512;
+  const height = 512;
+  context.fillStyle = "#F2F2F2";
+  context.fillRect(0, 0, width, height);
+
+  if (gradientId === "gradient-blue") {
+    const gradient = context.createLinearGradient(0, height, width, 0);
+    gradient.addColorStop(0, "#1A1A1A");
+    gradient.addColorStop(1, "#4C8DF1");
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, width, height);
+  } else if (gradientId === "gradient-pink") {
+    const gradient = context.createLinearGradient(0, height, width, 0);
+    gradient.addColorStop(0, "#E01A4F");
+    gradient.addColorStop(1, "#F2F2F2");
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, width, height);
+  } else if (gradientId === "gradient-ink") {
+    const gradient = context.createLinearGradient(0, height, width, 0);
+    gradient.addColorStop(0, "#1A1A1A");
+    gradient.addColorStop(1, "#4C8DF1");
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, width, height);
+  } else if (gradientId === "gradient-mono") {
+    const gradient = context.createLinearGradient(0, height, width, 0);
+    gradient.addColorStop(0, "#1A1A1A");
+    gradient.addColorStop(1, "#F2F2F2");
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, width, height);
+  } else if (gradientId === "gradient-dawn") {
+    const gradient = context.createLinearGradient(0, height, width, 0);
+    gradient.addColorStop(0, "#F2F2F2");
+    gradient.addColorStop(0.55, "#F2F2F2");
+    gradient.addColorStop(1, "#4C8DF1");
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, width, height);
+  } else {
+    const base = context.createLinearGradient(0, height, width, 0);
+    base.addColorStop(0, "#F2F2F2");
+    base.addColorStop(0.58, "#E7EDFF");
+    base.addColorStop(1, "#F8EDF2");
+    context.fillStyle = base;
+    context.fillRect(0, 0, width, height);
+  }
+
+  if (gradientId === "gradient-aurora") {
+    const blue = context.createRadialGradient(92, 400, 10, 92, 400, 250);
+    blue.addColorStop(0, "rgba(76,141,241,.9)");
+    blue.addColorStop(0.55, "rgba(76,141,241,.35)");
+    blue.addColorStop(1, "rgba(76,141,241,0)");
+    context.fillStyle = blue;
+    context.fillRect(0, 0, width, height);
+
+    const pink = context.createRadialGradient(400, 112, 10, 400, 112, 230);
+    pink.addColorStop(0, "rgba(224,26,79,.82)");
+    pink.addColorStop(0.55, "rgba(224,26,79,.25)");
+    pink.addColorStop(1, "rgba(224,26,79,0)");
+    context.fillStyle = pink;
+    context.fillRect(0, 0, width, height);
+  } else if (gradientId === "gradient-dawn") {
+    const pink = context.createRadialGradient(400, 112, 10, 400, 112, 220);
+    pink.addColorStop(0, "rgba(224,26,79,.48)");
+    pink.addColorStop(1, "rgba(224,26,79,0)");
+    context.fillStyle = pink;
+    context.fillRect(0, 0, width, height);
+  } else if (gradientId === "gradient-ink") {
+    const blue = context.createRadialGradient(368, 102, 10, 368, 102, 200);
+    blue.addColorStop(0, "rgba(76,141,241,.62)");
+    blue.addColorStop(1, "rgba(76,141,241,0)");
+    context.fillStyle = blue;
+    context.fillRect(0, 0, width, height);
+  }
+};
 
 export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }) {
   const [status, setStatus] = useState<WidgetStatus>({ active: false, paused: false, elapsed: 0, camera: false, cameraFilter: "original", avatar: AVATARS[0] });
@@ -20,7 +103,7 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
   const [cameraLarge, setCameraLarge] = useState(false);
-  const [bubbleBgColor, setBubbleBgColor] = useState(() => localStorage.getItem("camera-bubble-bg-color") || "#1A1A1A");
+  const [bubbleBgColor, setBubbleBgColor] = useState(() => localStorage.getItem("camera-bubble-bg-color") || "gradient-aurora");
   const [bubbleBgImage, setBubbleBgImage] = useState("");
   const [bgReplacement, setBgReplacement] = useState(() => localStorage.getItem("camera-bg-replacement") === "true");
   const backgroundImageUrl = useRef<string | null>(null);
@@ -240,8 +323,8 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
     input.height = 256;
     const inputContext = input.getContext("2d");
     const personCanvas = document.createElement("canvas");
-    personCanvas.width = 256;
-    personCanvas.height = 256;
+    personCanvas.width = 512;
+    personCanvas.height = 512;
     const personContext = personCanvas.getContext("2d");
     const maskCanvas = document.createElement("canvas");
     maskCanvas.width = 256;
@@ -249,8 +332,12 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
     const maskContext = maskCanvas.getContext("2d");
     if (!inputContext || !personContext || !maskContext) return;
     const maskImage = maskContext.createImageData(256, 256);
-    output.width = 256;
-    output.height = 256;
+    output.width = 512;
+    output.height = 512;
+    personContext.imageSmoothingEnabled = true;
+    personContext.imageSmoothingQuality = "high";
+    outputContext.imageSmoothingEnabled = true;
+    outputContext.imageSmoothingQuality = "high";
     setSegmentationError("");
     setSegmentationReady(false);
 
@@ -303,9 +390,11 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
                 const sourceX = Math.min(maskWidth - 1, Math.floor((x / 256) * maskWidth));
                 const sourceY = Math.min(maskHeight - 1, Math.floor((y / 256) * maskHeight));
                 const sourceIndex = sourceY * maskWidth + sourceX;
-                const alpha = values
-                  ? Math.round(Math.max(0, Math.min(1, (values[sourceIndex] - 0.12) / 0.58)) * 255)
-                  : categories?.[sourceIndex] === 1 ? 255 : 0;
+                let alpha = categories?.[sourceIndex] === 1 ? 255 : 0;
+                if (values) {
+                  const confidence = Math.max(0, Math.min(1, (values[sourceIndex] - 0.08) / 0.62));
+                  alpha = Math.round(confidence * confidence * (3 - 2 * confidence) * 255);
+                }
                 const targetIndex = (y * 256 + x) * 4;
                 maskImage.data[targetIndex] = 255;
                 maskImage.data[targetIndex + 1] = 255;
@@ -314,23 +403,29 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
               }
             }
             maskContext.putImageData(maskImage, 0, 0);
-            personContext.clearRect(0, 0, 256, 256);
-            personContext.drawImage(input, 0, 0);
+            personContext.clearRect(0, 0, 512, 512);
+            personContext.drawImage(input, 0, 0, 512, 512);
             personContext.globalCompositeOperation = "destination-in";
-            personContext.drawImage(maskCanvas, 0, 0);
+            personContext.filter = "blur(1px)";
+            personContext.drawImage(maskCanvas, 0, 0, 512, 512);
+            personContext.filter = "none";
             personContext.globalCompositeOperation = "source-over";
-            outputContext.clearRect(0, 0, 256, 256);
+            outputContext.clearRect(0, 0, 512, 512);
             const background = backgroundImageElement.current;
             if (background?.complete && background.naturalWidth > 0 && background.naturalHeight > 0) {
-              const scale = Math.max(256 / background.naturalWidth, 256 / background.naturalHeight);
-              const cropWidth = 256 / scale;
-              const cropHeight = 256 / scale;
+              const scale = Math.max(512 / background.naturalWidth, 512 / background.naturalHeight);
+              const cropWidth = 512 / scale;
+              const cropHeight = 512 / scale;
               const cropX = (background.naturalWidth - cropWidth) / 2;
               const cropY = (background.naturalHeight - cropHeight) / 2;
-              outputContext.drawImage(background, cropX, cropY, cropWidth, cropHeight, 0, 0, 256, 256);
+              outputContext.drawImage(background, cropX, cropY, cropWidth, cropHeight, 0, 0, 512, 512);
             } else {
-              outputContext.fillStyle = bubbleBgColorRef.current;
-              outputContext.fillRect(0, 0, 256, 256);
+              if (bubbleBgColorRef.current.startsWith("gradient-")) {
+                fillBubbleGradient(outputContext, bubbleBgColorRef.current);
+              } else {
+                outputContext.fillStyle = bubbleBgColorRef.current;
+                outputContext.fillRect(0, 0, 512, 512);
+              }
             }
             outputContext.drawImage(personCanvas, 0, 0);
             setSegmentationReady(true);
@@ -511,9 +606,14 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
     const filterClass = `camera-filter-${status.cameraFilter ?? "original"}`;
     const videoFilter = [status.cameraFilter === "warm" ? "sepia(.28) saturate(1.15)" : status.cameraFilter === "mono" ? "grayscale(1)" : "", status.cameraBlur ? "blur(2px)" : ""].filter(Boolean).join(" ") || "none";
     const avatar = status.avatar || AVATARS[0];
+    const bubbleGradient = BUBBLE_GRADIENTS.find((gradient) => gradient.id === bubbleBgColor);
+    const bubbleBackground = bubbleBgImage
+      ? `url(${bubbleBgImage}) center/cover no-repeat`
+      : bubbleGradient?.css ?? bubbleBgColor;
+    const bubbleBackgroundLabel = bubbleBgImage ? "Image" : bubbleGradient?.label ?? bubbleBgColor;
     return <div className={`floating-root camera-widget-root ${settingsOpen ? "camera-settings-open" : ""}`} onMouseDown={beginDrag}>
       <div className="camera-bubble-area">
-        <div className={`camera-widget-frame ${filterClass} ${cameraLarge ? "camera-frame-large" : ""}`} data-tauri-drag-region="true" title="Drag to move camera" style={{ borderColor: ringColor, borderWidth: ringThickness, borderStyle: "solid", background: bubbleBgImage ? `url(${bubbleBgImage}) center/cover no-repeat` : bubbleBgColor }}>
+        <div className={`camera-widget-frame ${filterClass} ${cameraLarge ? "camera-frame-large" : ""}`} data-tauri-drag-region="true" title="Drag to move camera" style={{ borderColor: ringColor, borderWidth: ringThickness, borderStyle: "solid", background: bubbleBackground }}>
           {bgReplacement && <canvas ref={segmentationCanvas} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", borderRadius: "50%", filter: videoFilter, opacity: segmentationReady && !segmentationError ? 1 : 0, zIndex: 1 }} />}
           {status.camera && status.active
             ? <video ref={cameraPreview} autoPlay playsInline muted style={{ filter: videoFilter, position: bgReplacement ? "absolute" : "relative", inset: bgReplacement ? 0 : undefined, width: "100%", height: "100%", opacity: bgReplacement && segmentationReady && !segmentationError ? 0 : 1, pointerEvents: "none", zIndex: bgReplacement ? 0 : undefined }} />
@@ -550,9 +650,9 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
         <div className="camera-settings-divider" />
         <div className="camera-ring-thickness-row"><div><strong>Ring thickness</strong><small>{ringThickness}px</small></div><input type="range" min={1} max={12} value={ringThickness} onChange={(event) => setRingThickness(Number(event.target.value))} aria-label="Ring thickness" /></div>
         <div className="camera-settings-divider" />
-        <div className="camera-panel-section-heading"><span>Bubble background</span><small>{bubbleBgImage ? "Image" : bubbleBgColor}</small></div>
+        <div className="camera-panel-section-heading"><span>Bubble background</span><small>{bubbleBackgroundLabel}</small></div>
         <div className="camera-ring-colors">
-          {["#1A1A1A", "#4C8DF1", "#E01A4F", "#10B981", "#F59E0B", "#FFFFFF"].map((color) => <button key={color} className={`camera-ring-color ${bubbleBgColor === color && !bubbleBgImage ? "selected" : ""}`} style={{ background: color }} onClick={() => { setBubbleBgColor(color); void saveBackgroundImage(null); }} aria-label={`Use ${color} background`} />)}
+          {BUBBLE_GRADIENTS.map((gradient) => <button key={gradient.id} className={`camera-ring-color ${bubbleBgColor === gradient.id && !bubbleBgImage ? "selected" : ""}`} style={{ background: gradient.css }} onClick={() => { setBubbleBgColor(gradient.id); void saveBackgroundImage(null); }} aria-label={`Use ${gradient.label} gradient background`} title={gradient.label} />)}
           <button className="camera-ring-color" style={{ background: "linear-gradient(135deg,#4C8DF1,#E01A4F)" }} onClick={() => backgroundImageInput.current?.click()} aria-label="Choose background image or GIF" />
           {bubbleBgImage && <button className="camera-ring-color" style={{ background: "#F2F2F2", color: "#1A1A1A", fontSize: 10 }} onClick={() => { void saveBackgroundImage(null); }} aria-label="Clear background image">✕</button>}
         </div>

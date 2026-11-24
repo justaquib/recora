@@ -60,6 +60,7 @@ export default function RecordingSetupWindow() {
   const pauseStarted = useRef(0);
   const pausedTotal = useRef(0);
   const pausedRef = useRef(false);
+  const pauseRequestPending = useRef(false);
   const latestElapsed = useRef(0);
   const stopRequested = useRef(false);
   const annotationSnapshotKey = useRef<string | null>(null);
@@ -299,7 +300,7 @@ export default function RecordingSetupWindow() {
     try {
       if (sizeBytes < 1024) throw new Error(`No usable media was encoded (${mimeType}, ${formatFileSize(sizeBytes)}). Check that the selected capture source is still active. Recovery file: ${temporaryPath}`);
       setRecording(false); setPaused(false);
-      const savingStatus: WidgetStatus = { active: true, ready: false, recording: false, paused: false, elapsed: captureDuration, camera: false, saving: true, savingStage: "saving" };
+      const savingStatus: WidgetStatus = { active: true, ready: false, recording: false, paused: false, elapsed: captureDuration, camera: false, bubble: false, bubbleRevision: bubbleRevision.current, saving: true, savingStage: "saving" };
       await Promise.all(["camera-bubble", "recording-controls", "annotation-overlay"].map((label) => emitTo(label, "recodex:widget-status", savingStatus)));
       const extension = mimeType.includes("mp4") ? "mp4" : "webm";
       const recordedDuration = mediaDuration ?? captureDuration;
@@ -320,7 +321,7 @@ export default function RecordingSetupWindow() {
       await putVideo(savedVideo);
       saved = true;
       setNotice(externalSaveError ? `Saved in Recodex. Could not copy to the selected folder: ${externalSaveError}` : `Saved ${extension.toUpperCase()} recording${saveDirectory.current ? " to your chosen location" : " to Documents/Recodex"}`);
-      const idleStatus: WidgetStatus = { active: true, ready: false, recording: false, paused: false, elapsed: 0, camera: false, microphone: false, microphoneAvailable: false, cameraDeviceId: cameraId, screen: captureOptions.current.captureMode === "screen", bubble: captureOptions.current.captureMode === "screen" && bubbleVisibleRef.current, bubbleRevision: bubbleRevision.current, saving: false };
+      const idleStatus: WidgetStatus = { active: true, ready: false, recording: false, paused: false, elapsed: 0, camera: false, microphone: false, microphoneAvailable: false, cameraDeviceId: cameraId, screen: captureOptions.current.captureMode === "screen", bubble: false, bubbleRevision: bubbleRevision.current, saving: false };
       await Promise.all(["camera-bubble", "recording-controls"].map((label) => emitTo(label, "recodex:widget-status", idleStatus)));
       void emitTo("main", recordingEvents.libraryChanged, { id: video.id }).catch((cause) => console.warn("Could not refresh the library after saving", cause));
     } catch (cause) {
@@ -484,10 +485,14 @@ export default function RecordingSetupWindow() {
   const stopRecording = () => {
     if (!recordingSession.current || stopRequested.current) return;
     stopRequested.current = true;
+    bubbleRevision.current += 1;
+    bubbleVisibleRef.current = false;
+    setBubbleVisible(false);
     const activePause = pausedRef.current ? Date.now() - pauseStarted.current : 0;
     latestElapsed.current = Math.floor((Date.now() - startTime.current - pausedTotal.current - activePause) / 1000);
-    const finalizingStatus: WidgetStatus = { active: true, ready: false, paused: false, elapsed: latestElapsed.current, camera: false, saving: true, savingStage: "finalizing" };
+    const finalizingStatus: WidgetStatus = { active: true, ready: false, recording: false, paused: false, elapsed: latestElapsed.current, camera: false, bubble: false, bubbleRevision: bubbleRevision.current, saving: true, savingStage: "finalizing" };
     void Promise.all(["camera-bubble", "recording-controls", "annotation-overlay"].map((label) => emitTo(label, "recodex:widget-status", finalizingStatus)));
+    void WebviewWindow.getByLabel("camera-bubble").then((widget) => widget?.hide()).catch(() => undefined);
     if (nativeRecordingPath.current) {
       const nativePath = nativeRecordingPath.current;
       void (async () => {
@@ -522,13 +527,14 @@ export default function RecordingSetupWindow() {
   };
 
   const togglePause = () => {
-    if (!recordingSession.current || stopRequested.current) return;
+    if (!recordingSession.current || stopRequested.current || pauseRequestPending.current) return;
+    pauseRequestPending.current = true;
     if (nativeRecordingPath.current) {
       const nextPaused = !pausedRef.current;
       void invoke("native_capture_pause", { paused: nextPaused }).then(() => {
         if (nextPaused) { pauseStarted.current = Date.now(); pausedRef.current = true; setPaused(true); }
         else { pausedTotal.current += Date.now() - pauseStarted.current; pausedRef.current = false; setPaused(false); }
-      }).catch((cause) => setError(cause instanceof Error ? cause.message : "Could not change native recording pause state."));
+      }).catch((cause) => setError(cause instanceof Error ? cause.message : "Could not change native recording pause state.")).finally(() => { pauseRequestPending.current = false; });
       return;
     }
     const recorder = mediaRecorder.current;
@@ -536,8 +542,8 @@ export default function RecordingSetupWindow() {
     try {
       if (action === "pause" && recorder?.state === "recording") recorder.pause();
       else if (action === "resume" && recorder?.state === "paused") recorder.resume();
-      else return;
-    } catch (cause) { setError(cause instanceof Error ? cause.message : `Could not ${action} recording.`); return; }
+      else { pauseRequestPending.current = false; return; }
+    } catch (cause) { pauseRequestPending.current = false; setError(cause instanceof Error ? cause.message : `Could not ${action} recording.`); return; }
     if (action === "pause") { pauseStarted.current = Date.now(); pausedRef.current = true; setPaused(true); }
     else { pausedTotal.current += Date.now() - pauseStarted.current; pausedRef.current = false; setPaused(false); }
     const activePause = pausedRef.current ? Date.now() - pauseStarted.current : 0;
@@ -548,6 +554,7 @@ export default function RecordingSetupWindow() {
       microphone: micEnabledRef.current,
       cameraDeviceId: cameraId, screen: captureOptions.current.captureMode === "screen", bubble: captureOptions.current.captureMode === "screen" && bubbleVisibleRef.current, bubbleRevision: bubbleRevision.current,
     } satisfies WidgetStatus).catch(() => undefined);
+    pauseRequestPending.current = false;
   };
 
   const toggleMicrophone = async () => {
@@ -602,6 +609,7 @@ export default function RecordingSetupWindow() {
     let unlisten: (() => void) | undefined;
     let unlistenPosition: (() => void) | undefined;
     let positionWriteTimer: number | null = null;
+    let cancelled = false;
     let unlistenAnnotation: (() => void) | undefined;
     let unlistenCameraSettings: (() => void) | undefined;
     let unlistenCountdownSkip: (() => void) | undefined;
@@ -655,14 +663,14 @@ export default function RecordingSetupWindow() {
         const main = await WebviewWindow.getByLabel("main");
         await main?.unminimize(); await main?.show(); await main?.setFocus();
       }
-    }).then((stop) => { unlisten = stop; }).catch((cause) => console.warn("Could not listen for widget actions", cause));
+    }).then((stop) => { if (cancelled) stop(); else unlisten = stop; }).catch((cause) => console.warn("Could not listen for widget actions", cause));
     void listen<{ label: string; x: number; y: number }>("recodex:widget-moved", (event) => {
       if (positionWriteTimer !== null) window.clearTimeout(positionWriteTimer);
       positionWriteTimer = window.setTimeout(() => {
         void writeSetting(`widgetPosition:${event.payload.label}`, { x: event.payload.x, y: event.payload.y }).catch((cause) => console.warn("Could not save floating widget position", cause));
         positionWriteTimer = null;
       }, 180);
-    }).then((stop) => { unlistenPosition = stop; }).catch((cause) => console.warn("Could not persist floating widget position", cause));
+    }).then((stop) => { if (cancelled) stop(); else unlistenPosition = stop; }).catch((cause) => console.warn("Could not persist floating widget position", cause));
     void listen<{ camera?: boolean; cameraDeviceId?: string }>("recodex:camera-settings", (event) => {
       if (event.payload.camera !== undefined) {
         captureOptions.current = { ...captureOptions.current, cameraEnabled: event.payload.camera };
@@ -670,9 +678,9 @@ export default function RecordingSetupWindow() {
         setCameraEnabled(event.payload.camera);
       }
       if (event.payload.cameraDeviceId !== undefined) setCameraId(event.payload.cameraDeviceId);
-    }).then((stop) => { unlistenCameraSettings = stop; }).catch((cause) => console.warn("Could not listen for camera settings", cause));
+    }).then((stop) => { if (cancelled) stop(); else unlistenCameraSettings = stop; }).catch((cause) => console.warn("Could not listen for camera settings", cause));
     void listen<Record<string, never>>(recordingEvents.countdownSkip, () => skipCountdown())
-      .then((stop) => { unlistenCountdownSkip = stop; }).catch((cause) => console.warn("Could not listen for countdown skip", cause));
+      .then((stop) => { if (cancelled) stop(); else unlistenCountdownSkip = stop; }).catch((cause) => console.warn("Could not listen for countdown skip", cause));
     void listen<{ tool: AnnotationTool }>("recodex:annotation-request", async (event) => {
       const tool = event.payload.tool;
       if (tool === "cursor" || tool === "off") {
@@ -698,8 +706,8 @@ export default function RecordingSetupWindow() {
       } catch (cause) {
         setNotice(cause instanceof Error ? cause.message : "Could not freeze the screen for annotation.");
       }
-    }).then((stop) => { unlistenAnnotation = stop; }).catch((cause) => console.warn("Could not listen for annotation requests", cause));
-    return () => { if (positionWriteTimer !== null) window.clearTimeout(positionWriteTimer); unlisten?.(); unlistenPosition?.(); unlistenAnnotation?.(); unlistenCameraSettings?.(); unlistenCountdownSkip?.(); };
+    }).then((stop) => { if (cancelled) stop(); else unlistenAnnotation = stop; }).catch((cause) => console.warn("Could not listen for annotation requests", cause));
+    return () => { cancelled = true; if (positionWriteTimer !== null) window.clearTimeout(positionWriteTimer); unlisten?.(); unlistenPosition?.(); unlistenAnnotation?.(); unlistenCameraSettings?.(); unlistenCountdownSkip?.(); };
   }, []);
 
   const displayError = error && !showRecorder && !recording;
