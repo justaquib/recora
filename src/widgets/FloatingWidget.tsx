@@ -5,6 +5,7 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import "../App.css";
 import "./FloatingWidget.css";
 import { Icon } from "../components/Icon";
+import { readSetting, writeSetting } from "../services/recordingStorage";
 import { formatTime } from "../utils/format";
 import type { AnnotationTool, CameraFilter, Source, WidgetStatus } from "../shared/types";
 
@@ -19,17 +20,18 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
   const [cameraLarge, setCameraLarge] = useState(false);
-  useEffect(() => {
-    const syncPinned = () => {
-      if (localStorage.getItem("camera-bubble-open") !== "true") return;
-      void getCurrentWindow().show().catch(() => undefined);
-    };
-    window.addEventListener("storage", syncPinned);
-    return () => window.removeEventListener("storage", syncPinned);
-  }, []);
+  const [bubbleBgColor, setBubbleBgColor] = useState(() => localStorage.getItem("camera-bubble-bg-color") || "#1A1A1A");
+  const [bubbleBgImage, setBubbleBgImage] = useState("");
+  const [bgReplacement, setBgReplacement] = useState(() => localStorage.getItem("camera-bg-replacement") === "true");
+  const backgroundImageUrl = useRef<string | null>(null);
+  const backgroundImageElement = useRef<HTMLImageElement | null>(null);
+  const bubbleBgColorRef = useRef(bubbleBgColor);
+  bubbleBgColorRef.current = bubbleBgColor;
+  const backgroundSelectionRevision = useRef(0);
   const [ringColor, setRingColor] = useState(() => localStorage.getItem("camera-ring-color") || "#4C8DF1");
   const [ringThickness, setRingThickness] = useState(() => Number(localStorage.getItem("camera-ring-thickness")) || 4);
   const [cameraError, setCameraError] = useState("");
+  const [backgroundStorageError, setBackgroundStorageError] = useState("");
   const settingsOpenRef = useRef(false);
   const shown = useRef(false);
   const settingsPositionOffsetX = useRef(0);
@@ -39,6 +41,8 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
   const statusRef = useRef(status);
   useEffect(() => { localStorage.setItem("camera-ring-color", ringColor); }, [ringColor]);
   useEffect(() => { localStorage.setItem("camera-ring-thickness", String(ringThickness)); }, [ringThickness]);
+  useEffect(() => { localStorage.setItem("camera-bubble-bg-color", bubbleBgColor); }, [bubbleBgColor]);
+  useEffect(() => { localStorage.setItem("camera-bg-replacement", String(bgReplacement)); }, [bgReplacement]);
   useEffect(() => {
     const handler = (event: StorageEvent) => {
       if (event.key === "camera-ring-color" && event.newValue) setRingColor(event.newValue);
@@ -51,10 +55,78 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
   const runStartedAt = useRef(0);
   const elapsedRef = useRef(0);
   const cameraPreview = useRef<HTMLVideoElement>(null);
+  const segmentationCanvas = useRef<HTMLCanvasElement>(null);
+  const [segmentationError, setSegmentationError] = useState("");
+  const [segmentationReady, setSegmentationReady] = useState(false);
+  const backgroundImageInput = useRef<HTMLInputElement>(null);
   const audioBars = useRef<HTMLSpanElement>(null);
   const widgetCameraStream = useRef<MediaStream | null>(null);
   const visibilityRevision = useRef(0);
   const visibilityQueue = useRef<Promise<void>>(Promise.resolve());
+
+  useEffect(() => {
+    if (!bubbleBgImage) {
+      backgroundImageElement.current = null;
+      return;
+    }
+    const image = new Image();
+    let current = true;
+    image.onload = () => { if (current) backgroundImageElement.current = image; };
+    image.onerror = () => {
+      if (current) {
+        backgroundImageElement.current = null;
+        setBackgroundStorageError("Background image could not be decoded. Using the selected color instead.");
+      }
+    };
+    image.src = bubbleBgImage;
+    return () => {
+      current = false;
+      if (backgroundImageElement.current === image) backgroundImageElement.current = null;
+    };
+  }, [bubbleBgImage]);
+
+  useEffect(() => {
+    if (kind !== "camera") return;
+    let cancelled = false;
+    const revision = backgroundSelectionRevision.current;
+    void (async () => {
+      let image = await readSetting<Blob>("camera-bubble-bg-image");
+      const legacyImage = localStorage.getItem("camera-bubble-bg-image");
+      if (cancelled || revision !== backgroundSelectionRevision.current) return;
+      if (!image && legacyImage?.startsWith("data:image/")) {
+        image = await fetch(legacyImage).then((response) => response.blob());
+        await writeSetting("camera-bubble-bg-image", image);
+        localStorage.removeItem("camera-bubble-bg-image");
+      }
+      if (cancelled || revision !== backgroundSelectionRevision.current || !image || !image.type.startsWith("image/")) return;
+      const url = URL.createObjectURL(image);
+      backgroundImageUrl.current = url;
+      setBubbleBgImage(url);
+    })().catch((cause) => {
+      console.warn("Could not load the saved camera background", cause);
+      if (!cancelled) setBackgroundStorageError("Saved background image could not be loaded.");
+    });
+    return () => {
+      cancelled = true;
+      if (backgroundImageUrl.current) URL.revokeObjectURL(backgroundImageUrl.current);
+      backgroundImageUrl.current = null;
+    };
+  }, [kind]);
+
+  const saveBackgroundImage = async (image: File | null) => {
+    backgroundSelectionRevision.current += 1;
+    if (backgroundImageUrl.current) URL.revokeObjectURL(backgroundImageUrl.current);
+    backgroundImageUrl.current = image ? URL.createObjectURL(image) : null;
+    setBubbleBgImage(backgroundImageUrl.current ?? "");
+    setBackgroundStorageError("");
+    try {
+      await writeSetting("camera-bubble-bg-image", image);
+      localStorage.removeItem("camera-bubble-bg-image");
+    } catch (cause) {
+      console.warn("Could not save the camera background", cause);
+      setBackgroundStorageError("Background image could not be saved. Try another image or GIF.");
+    }
+  };
 
   useEffect(() => {
     document.documentElement.classList.add("widget-document");
@@ -66,10 +138,9 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
     let unlistenAnnotation: (() => void) | undefined;
     const updateVisibility = (next: WidgetStatus) => {
       const revision = ++visibilityRevision.current;
-      const pinned = localStorage.getItem("camera-bubble-open") === "true";
       const shouldShow = kind === "controls"
         ? next.active
-        : pinned || (next.active && (next.bubble ?? next.camera));
+        : next.active && (next.bubble ?? next.camera);
       visibilityQueue.current = visibilityQueue.current.catch(() => undefined).then(async () => {
         if (revision !== visibilityRevision.current) return;
         try {
@@ -149,8 +220,149 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
   }, [kind]);
 
   useEffect(() => {
-    const pinned = localStorage.getItem("camera-bubble-open") === "true";
-    if (kind !== "camera" || (!status.active && !pinned) || !status.camera) return;
+    if (kind !== "camera" || !bgReplacement || !status.camera || !status.active) {
+      setSegmentationError("");
+      setSegmentationReady(false);
+      return;
+    }
+    let segmenter: import("@mediapipe/tasks-vision").ImageSegmenter | null = null;
+    let raf = 0;
+    let cancelled = false;
+    let lastVideoTime = -1;
+    const output = segmentationCanvas.current;
+    const video = cameraPreview.current;
+    if (!output || !video) return;
+    const outputContext = output.getContext("2d");
+    if (!outputContext) return;
+
+    const input = document.createElement("canvas");
+    input.width = 256;
+    input.height = 256;
+    const inputContext = input.getContext("2d");
+    const personCanvas = document.createElement("canvas");
+    personCanvas.width = 256;
+    personCanvas.height = 256;
+    const personContext = personCanvas.getContext("2d");
+    const maskCanvas = document.createElement("canvas");
+    maskCanvas.width = 256;
+    maskCanvas.height = 256;
+    const maskContext = maskCanvas.getContext("2d");
+    if (!inputContext || !personContext || !maskContext) return;
+    const maskImage = maskContext.createImageData(256, 256);
+    output.width = 256;
+    output.height = 256;
+    setSegmentationError("");
+    setSegmentationReady(false);
+
+    const drawCameraCover = (context: CanvasRenderingContext2D) => {
+      const sourceWidth = video.videoWidth;
+      const sourceHeight = video.videoHeight;
+      const scale = Math.max(256 / sourceWidth, 256 / sourceHeight);
+      const cropWidth = 256 / scale;
+      const cropHeight = 256 / scale;
+      const cropX = (sourceWidth - cropWidth) / 2;
+      const cropY = (sourceHeight - cropHeight) / 2;
+      context.drawImage(video, cropX, cropY, cropWidth, cropHeight, 0, 0, 256, 256);
+    };
+
+    const initialize = async () => {
+      try {
+        const { ImageSegmenter, FilesetResolver } = await import("@mediapipe/tasks-vision");
+        const vision = await FilesetResolver.forVisionTasks("/mediapipe/wasm");
+        segmenter = await ImageSegmenter.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: "/mediapipe/models/selfie_segmenter.tflite" },
+          runningMode: "VIDEO",
+          outputCategoryMask: true,
+          outputConfidenceMasks: true,
+        });
+        if (cancelled) {
+          segmenter.close();
+          return;
+        }
+
+        const renderFrame = () => {
+          if (cancelled) return;
+          if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth === 0 || video.videoHeight === 0 || video.currentTime === lastVideoTime) {
+            raf = requestAnimationFrame(renderFrame);
+            return;
+          }
+          lastVideoTime = video.currentTime;
+          try {
+            drawCameraCover(inputContext);
+            const result = segmenter?.segmentForVideo(input, performance.now());
+            const confidenceMasks = result?.confidenceMasks ?? [];
+            const confidenceMask = confidenceMasks.length === 1 ? confidenceMasks[0] : confidenceMasks[1];
+            const categoryMask = result?.categoryMask;
+            if (!confidenceMask && !categoryMask) throw new Error("MediaPipe returned no person mask.");
+            const values = confidenceMask?.getAsFloat32Array();
+            const categories = values ? null : categoryMask?.getAsUint8Array();
+            const maskWidth = confidenceMask?.width ?? categoryMask?.width ?? 256;
+            const maskHeight = confidenceMask?.height ?? categoryMask?.height ?? 256;
+            for (let y = 0; y < 256; y += 1) {
+              for (let x = 0; x < 256; x += 1) {
+                const sourceX = Math.min(maskWidth - 1, Math.floor((x / 256) * maskWidth));
+                const sourceY = Math.min(maskHeight - 1, Math.floor((y / 256) * maskHeight));
+                const sourceIndex = sourceY * maskWidth + sourceX;
+                const alpha = values
+                  ? Math.round(Math.max(0, Math.min(1, (values[sourceIndex] - 0.12) / 0.58)) * 255)
+                  : categories?.[sourceIndex] === 1 ? 255 : 0;
+                const targetIndex = (y * 256 + x) * 4;
+                maskImage.data[targetIndex] = 255;
+                maskImage.data[targetIndex + 1] = 255;
+                maskImage.data[targetIndex + 2] = 255;
+                maskImage.data[targetIndex + 3] = alpha;
+              }
+            }
+            maskContext.putImageData(maskImage, 0, 0);
+            personContext.clearRect(0, 0, 256, 256);
+            personContext.drawImage(input, 0, 0);
+            personContext.globalCompositeOperation = "destination-in";
+            personContext.drawImage(maskCanvas, 0, 0);
+            personContext.globalCompositeOperation = "source-over";
+            outputContext.clearRect(0, 0, 256, 256);
+            const background = backgroundImageElement.current;
+            if (background?.complete && background.naturalWidth > 0 && background.naturalHeight > 0) {
+              const scale = Math.max(256 / background.naturalWidth, 256 / background.naturalHeight);
+              const cropWidth = 256 / scale;
+              const cropHeight = 256 / scale;
+              const cropX = (background.naturalWidth - cropWidth) / 2;
+              const cropY = (background.naturalHeight - cropHeight) / 2;
+              outputContext.drawImage(background, cropX, cropY, cropWidth, cropHeight, 0, 0, 256, 256);
+            } else {
+              outputContext.fillStyle = bubbleBgColorRef.current;
+              outputContext.fillRect(0, 0, 256, 256);
+            }
+            outputContext.drawImage(personCanvas, 0, 0);
+            setSegmentationReady(true);
+          } catch (cause) {
+            console.error("Camera background segmentation failed", cause);
+            segmenter?.close();
+            segmenter = null;
+            setSegmentationError("Background replacement is unavailable. Showing the original camera.");
+            setSegmentationReady(false);
+            return;
+          }
+          raf = requestAnimationFrame(renderFrame);
+        };
+        raf = requestAnimationFrame(renderFrame);
+      } catch (cause) {
+        console.error("Could not initialize camera background replacement", cause);
+        if (!cancelled) {
+          setSegmentationError("Background replacement is unavailable. Showing the original camera.");
+          setSegmentationReady(false);
+        }
+      }
+    };
+    void initialize();
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      segmenter?.close();
+    };
+  }, [kind, bgReplacement, status.camera, status.active]);
+
+  useEffect(() => {
+    if (kind !== "camera" || !status.active || !status.camera) return;
     let cancelled = false;
     const video = cameraPreview.current;
     const videoConstraints: MediaTrackConstraints = status.cameraDeviceId ? { deviceId: { exact: status.cameraDeviceId }, width: 640, height: 640 } : { width: 640, height: 640 };
@@ -301,9 +513,10 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
     const avatar = status.avatar || AVATARS[0];
     return <div className={`floating-root camera-widget-root ${settingsOpen ? "camera-settings-open" : ""}`} onMouseDown={beginDrag}>
       <div className="camera-bubble-area">
-        <div className={`camera-widget-frame ${filterClass} ${cameraLarge ? "camera-frame-large" : ""}`} data-tauri-drag-region="true" title="Drag to move camera" style={{ borderColor: ringColor, borderWidth: ringThickness, borderStyle: "solid" }}>
+        <div className={`camera-widget-frame ${filterClass} ${cameraLarge ? "camera-frame-large" : ""}`} data-tauri-drag-region="true" title="Drag to move camera" style={{ borderColor: ringColor, borderWidth: ringThickness, borderStyle: "solid", background: bubbleBgImage ? `url(${bubbleBgImage}) center/cover no-repeat` : bubbleBgColor }}>
+          {bgReplacement && <canvas ref={segmentationCanvas} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", borderRadius: "50%", filter: videoFilter, opacity: segmentationReady && !segmentationError ? 1 : 0, zIndex: 1 }} />}
           {status.camera && status.active
-            ? <video ref={cameraPreview} autoPlay playsInline muted style={{ filter: videoFilter }} />
+            ? <video ref={cameraPreview} autoPlay playsInline muted style={{ filter: videoFilter, position: bgReplacement ? "absolute" : "relative", inset: bgReplacement ? 0 : undefined, width: "100%", height: "100%", opacity: bgReplacement && segmentationReady && !segmentationError ? 0 : 1, pointerEvents: "none", zIndex: bgReplacement ? 0 : undefined }} />
             : <div className="camera-widget-placeholder"><div className="camera-avatar">{avatar}</div><span>Camera off</span></div>}
           {status.camera && status.active && <span className="camera-widget-live"><i /> LIVE</span>}
           <button className="camera-resize-button" onClick={() => setCameraLarge((large) => !large)} aria-label={cameraLarge ? "Shrink camera bubble" : "Enlarge camera bubble"} title={cameraLarge ? "Shrink" : "Enlarge"}><Icon name={cameraLarge ? "shrink" : "expand"} size={14} /></button>
@@ -315,7 +528,7 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
       </div>
       {settingsOpen && <section className="camera-settings-panel" aria-label="Camera settings" data-no-drag="true">
         <header className="camera-settings-header"><strong>Camera settings</strong><button onClick={() => void toggleSettings()} aria-label="Close camera settings"><Icon name="close" size={16} /></button></header>
-        {cameraError && <div className="camera-panel-error">{cameraError}</div>}
+        {(cameraError || segmentationError || backgroundStorageError) && <div className="camera-panel-error">{cameraError || segmentationError || backgroundStorageError}</div>}
         <label className="camera-device-select"><Icon name="camera" size={17} /><select aria-label="Choose camera" value={status.cameraDeviceId ?? ""} onChange={(event) => updateCameraSetting({ cameraDeviceId: event.target.value })}>
           {cameraDevices.length === 0 && <option value="">Camera unavailable</option>}
           {cameraDevices.map((device) => <option key={device.deviceId} value={device.deviceId}>{device.label}</option>)}
@@ -336,6 +549,16 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
         </div>
         <div className="camera-settings-divider" />
         <div className="camera-ring-thickness-row"><div><strong>Ring thickness</strong><small>{ringThickness}px</small></div><input type="range" min={1} max={12} value={ringThickness} onChange={(event) => setRingThickness(Number(event.target.value))} aria-label="Ring thickness" /></div>
+        <div className="camera-settings-divider" />
+        <div className="camera-panel-section-heading"><span>Bubble background</span><small>{bubbleBgImage ? "Image" : bubbleBgColor}</small></div>
+        <div className="camera-ring-colors">
+          {["#1A1A1A", "#4C8DF1", "#E01A4F", "#10B981", "#F59E0B", "#FFFFFF"].map((color) => <button key={color} className={`camera-ring-color ${bubbleBgColor === color && !bubbleBgImage ? "selected" : ""}`} style={{ background: color }} onClick={() => { setBubbleBgColor(color); void saveBackgroundImage(null); }} aria-label={`Use ${color} background`} />)}
+          <button className="camera-ring-color" style={{ background: "linear-gradient(135deg,#4C8DF1,#E01A4F)" }} onClick={() => backgroundImageInput.current?.click()} aria-label="Choose background image or GIF" />
+          {bubbleBgImage && <button className="camera-ring-color" style={{ background: "#F2F2F2", color: "#1A1A1A", fontSize: 10 }} onClick={() => { void saveBackgroundImage(null); }} aria-label="Clear background image">✕</button>}
+        </div>
+        <input ref={backgroundImageInput} type="file" accept="image/*" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void saveBackgroundImage(file); event.target.value = ""; }} />
+        <div className="camera-settings-divider" />
+        <div className="camera-blur-row"><div><strong>Background replacement</strong><small>Replace webcam background with selected backdrop</small></div><button role="switch" aria-checked={bgReplacement} className={`camera-settings-switch ${bgReplacement ? "on" : ""}`} onClick={() => setBgReplacement((value) => !value)}><i /></button></div>
         <div className="camera-settings-divider" />
         <button className="camera-avatar-option" onClick={() => setAvatarPickerOpen((open) => !open)} aria-expanded={avatarPickerOpen}><span className="camera-avatar-option-icon">{avatar}</span><span><strong>Choose avatar</strong><small>Use an avatar instead of video</small></span><Icon name="chevronRight" size={16} /></button>
         {avatarPickerOpen && <div className="camera-avatar-grid">{AVATARS.map((item) => <button key={item} className={avatar === item ? "selected" : ""} onClick={() => { updateCameraSetting({ avatar: item, camera: false }); setAvatarPickerOpen(false); }} aria-label={`Choose ${item} avatar`}>{item}</button>)}</div>}

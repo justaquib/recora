@@ -64,6 +64,7 @@ function MainShell() {
     let unlistenFocus: (() => void) | undefined;
     let unlistenPreferences: (() => void) | undefined;
     const closeFloatingWindows = async () => {
+      localStorage.removeItem("camera-bubble-open");
       const inactive = { active: false, ready: false, recording: false, preparing: false, paused: false, elapsed: 0, camera: false, bubble: false, saving: false };
       await Promise.all(["camera-bubble", "recording-controls", "annotation-overlay"].map((label) => emitTo(label, "recodex:widget-status", inactive).catch(() => undefined)));
       await emitTo("recording-countdown", recordingEvents.countdownState, { remaining: null }).catch(() => undefined);

@@ -27,11 +27,9 @@ export default function PreferencesPage({ saveDirectory, recordingPreferences, o
       if (!window) return;
       const visible = await window.isVisible();
       if (visible) {
-        localStorage.removeItem("camera-bubble-open");
         await emitTo("camera-bubble", "recodex:widget-status", { active: false, recording: false, camera: false, bubble: false });
         await window.hide();
       } else {
-        localStorage.setItem("camera-bubble-open", "true");
         await window.show();
         await emitTo("camera-bubble", "recodex:widget-status", { active: true, recording: false, paused: false, elapsed: 0, camera: true, microphone: false, microphoneAvailable: false, screen: false, bubble: true });
       }

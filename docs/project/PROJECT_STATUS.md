@@ -1,6 +1,6 @@
 # Recodex project status
 
-Last updated: 2026-11-23
+Last updated: 2026-11-24
 
 This file is the working record for the Recodex desktop app: current architecture, completed work, user-visible failures, and the next engineering steps. Update it whenever a feature ships, a blocker changes, or the implementation plan changes.
 
@@ -35,6 +35,7 @@ The query parameter `?widget=...` selects which Tauri webview is mounted. The da
 - Moved Home into the floating recording controls and removed the separate home window.
 - Added live microphone mute control to the floating recording bar.
 - Added a recorder-bar camera-bubble toggle. Hiding the bubble disables its camera stream; showing it again displays the avatar until the camera is explicitly enabled.
+- Removed the persisted camera-bubble pin as a visibility authority so startup and inactive widget status always close the bubble; the Preferences preview remains explicitly openable.
 - Kept the camera bubble and floating controls available after a successful stop. The controls return to an idle state with a New recording action, and the bubble stays visible with the camera off.
 - Made bubble visibility authoritative across the camera and controls webviews so hiding it disables the preview before hiding its window.
 - Added a monotonic camera-bubble visibility revision so delayed status messages cannot undo a recent show/hide click; widget listeners reconcile visibility with the native window state, and button actions apply show/hide directly as well.
@@ -69,6 +70,10 @@ The WebView screen recorder repeatedly produced a tiny MP4 header and no frames;
 The Swift bridge compiles and `cargo check` passes, but live ScreenCaptureKit behavior, file duration, audio, pause/resume, permissions, and stop/finalize are not yet confirmed in a real recording. Do not mark the zero-frame issue fixed until acceptance confirms a playable recording with expected duration and file size. A zero-frame stop returns an explicit native capture error. ScreenCaptureKit microphone capture requires macOS 15; screen capture and the system picker require macOS 14. On macOS 14, microphone must be off for screen capture.
 
 Latest reports: ScreenCaptureKit previously delivered 27 video frames and 73 microphone samples, but AVAssetWriter failed finalization with `AVFoundationErrorDomain -11800`. macOS 15+ uses Apple's `SCRecordingOutput` to write MP4 directly. Stop and pause now require the recording-output finish callback (up to 30 seconds) before checking file stability and duration; a stable file before callback completion is not accepted as finalized. Stop also compares the measured video-track duration with the active recorder time before joining/importing it and includes ScreenCaptureKit's reported duration and frame count in mismatch diagnostics. If ScreenCaptureKit stops early or the video timeline is materially shorter, the incomplete video is not added to the library and its recovery segments are kept. macOS 14 retains the AVAssetWriter fallback. These safeguards compile but still need live capture acceptance before the capture failure is marked resolved.
+
+### P2 — Camera bubble background replacement still not working
+
+The MediaPipe camera-bubble path now uses a fixed square camera crop so the segmentation mask and source pixels stay aligned, handles the checked-in single-mask selfie model as well as two-class outputs, reuses its canvases, skips duplicate camera frames, and falls back to raw video if the model fails. The compositor paints solid colors or decoded image/GIF frames beneath the masked person; image assets are stored in IndexedDB with migration from the prior localStorage data URL. The frontend build passes, but live camera acceptance on macOS is still required before this issue is marked fixed.
 
 ### P1 — Camera bubble is not composited into screen videos
 
