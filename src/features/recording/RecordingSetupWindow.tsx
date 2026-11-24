@@ -16,9 +16,12 @@ import { appendBlobToTemporaryFile, copyRecordingFile, createTemporaryRecordingF
 export default function RecordingSetupWindow() {
   const [captureMode, setCaptureMode] = useState<CaptureMode>("screen");
   const [cameraEnabled, setCameraEnabled] = useState(true);
+  const cameraEnabledRef = useRef(cameraEnabled);
+  cameraEnabledRef.current = cameraEnabled;
   const [bubbleVisible, setBubbleVisible] = useState(true);
   const bubbleVisibleRef = useRef(true);
   const bubbleRevision = useRef(0);
+  const bubbleCameraWasEnabledRef = useRef(false);
   const [micEnabled, setMicEnabled] = useState(true);
   const micEnabledRef = useRef(micEnabled);
   micEnabledRef.current = micEnabled;
@@ -161,7 +164,7 @@ export default function RecordingSetupWindow() {
       const activePause = paused ? Date.now() - pauseStarted.current : 0;
       const currentElapsed = Math.floor((Date.now() - startTime.current - pausedTotal.current - activePause) / 1000);
       setElapsed(currentElapsed);
-      const status: WidgetStatus = { active: true, ready: true, recording: true, preparing: false, paused, elapsed: currentElapsed, camera: captureMode === "screen" && cameraEnabled, microphone: micEnabled, microphoneAvailable: captureMode === "screen" || Boolean(micStream.current?.getAudioTracks().length), cameraDeviceId: cameraId, screen: captureMode === "screen", bubble: captureMode === "screen" && bubbleVisibleRef.current, bubbleRevision: bubbleRevision.current };
+      const status: WidgetStatus = { active: true, ready: true, recording: true, preparing: false, paused, elapsed: currentElapsed, camera: captureMode === "screen" && cameraEnabledRef.current, microphone: micEnabled, microphoneAvailable: captureMode === "screen" || Boolean(micStream.current?.getAudioTracks().length), cameraDeviceId: cameraId, screen: captureMode === "screen", bubble: captureMode === "screen" && bubbleVisibleRef.current, bubbleRevision: bubbleRevision.current };
       void Promise.all(["camera-bubble", "recording-controls"].map((label) => emitTo(label, "recodex:widget-status", status))).catch(() => undefined);
     }, 1000);
     return () => window.clearInterval(timer);
@@ -603,8 +606,15 @@ export default function RecordingSetupWindow() {
         bubbleVisibleRef.current = visible;
         setBubbleVisible(visible);
         if (!visible) {
+          bubbleCameraWasEnabledRef.current = captureOptions.current.cameraEnabled;
           captureOptions.current = { ...captureOptions.current, cameraEnabled: false };
+          cameraEnabledRef.current = false;
           setCameraEnabled(false);
+        } else {
+          const restoreCamera = bubbleCameraWasEnabledRef.current;
+          captureOptions.current = { ...captureOptions.current, cameraEnabled: restoreCamera };
+          cameraEnabledRef.current = restoreCamera;
+          setCameraEnabled(restoreCamera);
         }
         const status: WidgetStatus = {
           active: true,
@@ -647,6 +657,7 @@ export default function RecordingSetupWindow() {
     void listen<{ camera?: boolean; cameraDeviceId?: string }>("recodex:camera-settings", (event) => {
       if (event.payload.camera !== undefined) {
         captureOptions.current = { ...captureOptions.current, cameraEnabled: event.payload.camera };
+        cameraEnabledRef.current = event.payload.camera;
         setCameraEnabled(event.payload.camera);
       }
       if (event.payload.cameraDeviceId !== undefined) setCameraId(event.payload.cameraDeviceId);

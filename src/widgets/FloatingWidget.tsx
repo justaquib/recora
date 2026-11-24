@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { availableMonitors, getCurrentWindow, LogicalSize, PhysicalPosition } from "@tauri-apps/api/window";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import "../App.css";
 import "./FloatingWidget.css";
 import { Icon } from "../components/Icon";
@@ -173,6 +174,16 @@ export default function FloatingWidget({ kind }: { kind: "camera" | "controls" }
       const next = { ...statusRef.current, saving: true, savingStage: "finalizing" as const };
       statusRef.current = next;
       setStatus(next);
+    }
+    if (action === "bubble") {
+      const nextBubble = !statusRef.current.bubble;
+      const next = { ...statusRef.current, bubble: nextBubble, camera: nextBubble ? statusRef.current.camera : false };
+      statusRef.current = next;
+      setStatus(next);
+      void WebviewWindow.getByLabel("camera-bubble").then((window: any) => {
+        if (nextBubble) void window?.show().catch(() => undefined);
+        else void window?.hide().catch(() => undefined);
+      }).catch(() => undefined);
     }
     void emitTo("recording-setup", "recodex:widget-action", { action });
   };
