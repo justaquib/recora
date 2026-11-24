@@ -11,6 +11,7 @@ export type VideoItem = {
   filePath?: string;
   filePaths?: string[];
   mimeType?: string;
+  denoised?: boolean;
 };
 export type Source = { deviceId: string; label: string };
 export type CaptureMode = "screen" | "camera";

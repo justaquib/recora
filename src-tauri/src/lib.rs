@@ -539,6 +539,193 @@ fn embed_thumbnail_in_video(source_path: String, thumbnail_bytes: Vec<u8>, in_pl
 }
 
 #[tauri::command]
+fn denoise_recording(source_path: String, level: String, in_place: bool) -> Result<String, String> {
+    use std::{env, fs, process::Command, path::PathBuf};
+    use deep_filter_rt::tract::{DfParams, DfTract, RuntimeParams};
+    use ndarray::Array2;
+
+    let source = PathBuf::from(&source_path);
+    if !source.exists() {
+        return Err(format!("Could not locate the existing recording: {}", source.display()));
+    }
+
+    let temp_dir = std::env::temp_dir().join("recodex-denoise");
+    fs::create_dir_all(&temp_dir).map_err(|error| format!("Could not create temporary folder: {error}"))?;
+    let audio_input = temp_dir.join(format!("input-{}.wav", std::process::id()));
+    let audio_output = temp_dir.join(format!("output-{}.wav", std::process::id()));
+    let output_path = if in_place {
+        source.with_file_name(format!(
+            "{}-denoised.mp4",
+            source.file_stem().and_then(|value| value.to_str()).unwrap_or("recodex-recording")
+        ))
+    } else {
+        let directory = source.parent().map(PathBuf::from).unwrap_or_else(|| {
+            PathBuf::from(env::var_os("HOME").unwrap_or_default()).join("Documents").join("Recodex")
+        });
+        fs::create_dir_all(&directory).map_err(|error| format!("Could not create destination folder: {error}"))?;
+        directory.join(format!(
+            "{}-denoised.mp4",
+            source.file_stem().and_then(|value| value.to_str()).unwrap_or("recodex-recording")
+        ))
+    };
+
+    // Extract a 48 kHz mono WAV from the source recording.
+    let extract = Command::new(ffmpeg_binary())
+        .args([
+            "-y",
+            "-i",
+            source.to_str().ok_or("Recording path contains an invalid character")?,
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "48000",
+            "-c:a",
+            "pcm_s16le",
+            audio_input.to_str().ok_or("Audio path contains an invalid character")?,
+        ])
+        .output()
+        .map_err(|error| format!("Could not extract audio: {error}"))?;
+    if !extract.status.success() {
+        let _ = fs::remove_file(&audio_input);
+        let stderr = String::from_utf8_lossy(&extract.stderr);
+        return Err(format!("Could not extract audio: {}", stderr.trim()));
+    }
+
+    let wav_bytes = fs::read(&audio_input).map_err(|error| format!("Could not read extracted audio: {error}"))?;
+    let mut data_offset = 0usize;
+    let mut data_size = 0usize;
+    let mut pos = 12usize;
+    while pos + 8 <= wav_bytes.len() {
+        let chunk_id = &wav_bytes[pos..pos + 4];
+        let size = u32::from_le_bytes(wav_bytes[pos + 4..pos + 8].try_into().unwrap_or([0; 4])) as usize;
+        if chunk_id == b"data" {
+            data_offset = pos + 8;
+            data_size = size.min(wav_bytes.len().saturating_sub(data_offset));
+            break;
+        }
+        pos += 8 + size;
+        if size % 2 == 1 {
+            pos += 1;
+        }
+    }
+    if data_offset == 0 {
+        let _ = fs::remove_file(&audio_input);
+        return Err("Extracted audio did not contain a data chunk.".into());
+    }
+
+    let mut samples = Vec::with_capacity(data_size / 2);
+    let mut i = data_offset;
+    while i + 2 <= data_offset + data_size && i + 2 <= wav_bytes.len() {
+        samples.push(i16::from_le_bytes(wav_bytes[i..i + 2].try_into().unwrap_or([0; 2])));
+        i += 2;
+    }
+
+    let atten_lim_db = match level.as_str() {
+        "low" => 15.0f32,
+        "medium" => 25.0f32,
+        _ => 40.0f32,
+    };
+    let mut runtime = RuntimeParams::default_with_ch(1);
+    runtime.atten_lim_db = atten_lim_db;
+    runtime.post_filter = true;
+    runtime.post_filter_beta = 0.02;
+    runtime = runtime.with_thresholds(-20.0, 40.0, 30.0);
+
+    let mut df = DfTract::new(DfParams::default(), &runtime)
+        .map_err(|error| format!("Could not initialize DeepFilterNet: {error}"))?;
+
+    let hop = df.hop_size;
+    // Boost very quiet recordings so DeepFilterNet does not treat them as silence.
+    let max_abs = samples.iter().map(|value| value.unsigned_abs()).max().unwrap_or(0) as f32;
+    let gain = if max_abs > 0.0 && max_abs < 1600.0 { 1600.0 / max_abs } else { 1.0 };
+    let gain = gain.min(8.0);
+
+    let mut enhanced = vec![0f32; samples.len()];
+    let mut offset = 0usize;
+    while offset < samples.len() {
+        let remaining = samples.len() - offset;
+        let frame_len = remaining.min(hop);
+        let mut input = vec![0f32; hop];
+        for j in 0..frame_len {
+            input[j] = (samples[offset + j] as f32 / 32768.0) * gain;
+        }
+        let noisy = Array2::from_shape_vec((1, hop), input)
+            .map_err(|error| format!("Could not build audio frame: {error}"))?;
+        let mut output = Array2::zeros((1, hop));
+        df.process(noisy.view(), output.view_mut())
+            .map_err(|error| format!("DeepFilterNet processing failed: {error}"))?;
+        for j in 0..frame_len {
+            let value = (output[[0, j]] / gain * 32768.0).clamp(-32768.0, 32767.0);
+            enhanced[offset + j] = value;
+        }
+        offset += frame_len;
+    }
+
+    // Write a 48 kHz mono 16-bit WAV file.
+    let mut wav_out = Vec::with_capacity(44 + enhanced.len() * 2);
+    wav_out.extend_from_slice(b"RIFF");
+    let data_bytes = (enhanced.len() * 2) as u32;
+    wav_out.extend_from_slice(&(36 + data_bytes).to_le_bytes());
+    wav_out.extend_from_slice(b"WAVE");
+    wav_out.extend_from_slice(b"fmt ");
+    wav_out.extend_from_slice(&16u32.to_le_bytes());
+    wav_out.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    wav_out.extend_from_slice(&1u16.to_le_bytes()); // channels
+    wav_out.extend_from_slice(&48000u32.to_le_bytes()); // sample rate
+    wav_out.extend_from_slice(&(48000u32 * 2).to_le_bytes()); // byte rate
+    wav_out.extend_from_slice(&2u16.to_le_bytes()); // block align
+    wav_out.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
+    wav_out.extend_from_slice(b"data");
+    wav_out.extend_from_slice(&data_bytes.to_le_bytes());
+    for value in enhanced {
+        wav_out.extend_from_slice(&(value as i16).to_le_bytes());
+    }
+    fs::write(&audio_output, wav_out).map_err(|error| format!("Could not write denoised audio: {error}"))?;
+
+    // Re-mux the denoised audio with the original video.
+    let mux = Command::new(ffmpeg_binary())
+        .args([
+            "-y",
+            "-i",
+            source.to_str().ok_or("Recording path contains an invalid character")?,
+            "-i",
+            audio_output.to_str().ok_or("Audio path contains an invalid character")?,
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-c:v",
+            "libx264",
+            "-crf",
+            "23",
+            "-preset",
+            "medium",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-shortest",
+            output_path.to_str().ok_or("Output path contains an invalid character")?,
+        ])
+        .output()
+        .map_err(|error| format!("Could not run ffmpeg for denoising: {error}"))?;
+    let _ = fs::remove_file(&audio_input);
+    let _ = fs::remove_file(&audio_output);
+    if !mux.status.success() {
+        let _ = fs::remove_file(&output_path);
+        let stderr = String::from_utf8_lossy(&mux.stderr);
+        return Err(format!("Could not create denoised video: {}", stderr.trim()));
+    }
+
+    if in_place {
+        fs::remove_file(&source).map_err(|error| format!("Could not remove original recording: {error}"))?;
+        // Keep the new file name; caller updates metadata.
+    }
+    Ok(output_path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
 fn write_recording_chunk(path: String, bytes: Vec<u8>, first_chunk: bool) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -579,7 +766,7 @@ fn delete_recording_file(path: String) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![native_capture_choose_source, native_capture_start, native_capture_pause, native_capture_set_microphone, native_capture_stop, native_capture_snapshot, read_recording_file, recording_file_size, request_screen_capture_permission, open_capture_privacy_settings, choose_recording_directory, create_recording_file, write_recording_chunk, create_temporary_recording_file, append_temporary_recording_chunk, finalize_temporary_recording_file, import_recording_file, copy_recording_file, export_recording_file, estimate_export_size, embed_thumbnail_in_video, delete_recording_file])
+        .invoke_handler(tauri::generate_handler![native_capture_choose_source, native_capture_start, native_capture_pause, native_capture_set_microphone, native_capture_stop, native_capture_snapshot, read_recording_file, recording_file_size, request_screen_capture_permission, open_capture_privacy_settings, choose_recording_directory, create_recording_file, write_recording_chunk, create_temporary_recording_file, append_temporary_recording_chunk, finalize_temporary_recording_file, import_recording_file, copy_recording_file, export_recording_file, estimate_export_size, embed_thumbnail_in_video, denoise_recording, delete_recording_file])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

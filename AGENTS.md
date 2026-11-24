@@ -17,3 +17,7 @@
 - This applies to all branches and all remotes.
 - Do not push automatically; wait for the user to approve.
 - Before pushing, summarize what will be pushed (branch, remote, commit count) and ask "Push now?" or similar.
+## Implementation Constraints
+
+- Do not add or use any third-party API without explicit user approval.
+- Do not add or use another programming language for implementation without explicit user approval.

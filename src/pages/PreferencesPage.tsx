@@ -1,4 +1,5 @@
 import PageFooter from "../components/PageFooter";
+import { Icon } from "../components/Icon";
 import { emitTo } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Camera, Folder, Monitor, RotateCcw, ShieldCheck } from "lucide-react";
@@ -38,10 +39,10 @@ export default function PreferencesPage({ saveDirectory, recordingPreferences, o
   };
 
   return <section className="library-page settings-page">
-    <div className="page-heading settings-heading"><div><div className="eyebrow">WORKSPACE</div><h1>Preferences</h1><p>Personalize your workspace and recording defaults.</p></div><span className="settings-local-badge"><ShieldCheck size={14} /> Private by default</span></div>
+    <div className="page-heading settings-heading"><div><div className="eyebrow">WORKSPACE</div><h1>Preferences</h1><p>Personalize your workspace and recording defaults.</p></div><span className="settings-local-badge"><Icon lucide={ShieldCheck} size={14} /> Private by default</span></div>
     <div className="settings-content settings-single-page">
       <section className="settings-section">
-        <div className="settings-panel settings-capture-mode"><strong>Capture mode</strong><div className="mode-switch"><button className={recordingPreferences.captureMode === "screen" ? "active" : ""} onClick={() => updateRecordingPreferences({ captureMode: "screen" })}><Monitor size={16} /> Screen</button><button className={recordingPreferences.captureMode === "camera" ? "active" : ""} onClick={() => updateRecordingPreferences({ captureMode: "camera" })}><Camera size={16} /> Camera only</button></div></div>
+        <div className="settings-panel settings-capture-mode"><strong>Capture mode</strong><div className="mode-switch"><button className={recordingPreferences.captureMode === "screen" ? "active" : ""} onClick={() => updateRecordingPreferences({ captureMode: "screen" })}><Icon lucide={Monitor} size={16} /> Screen</button><button className={recordingPreferences.captureMode === "camera" ? "active" : ""} onClick={() => updateRecordingPreferences({ captureMode: "camera" })}><Icon lucide={Camera} size={16} /> Camera only</button></div></div>
         <div className="settings-panel settings-toggle-list">
           <div className="settings-toggle-row"><div><strong>Microphone audio</strong><small>Include voice audio by default</small></div><button role="switch" aria-checked={recordingPreferences.micEnabled} className={`switch ${recordingPreferences.micEnabled ? "on" : ""}`} onClick={() => updateRecordingPreferences({ micEnabled: !recordingPreferences.micEnabled })}><i /></button></div>
           <div className="settings-divider" />
@@ -59,10 +60,10 @@ export default function PreferencesPage({ saveDirectory, recordingPreferences, o
           <div className="settings-countdown px-3.5"><div><strong>Camera bubble ring thickness</strong><small>Border width in pixels</small></div><label><input type="range" min="1" max="12" value={ringThickness} onChange={(event) => setRingThickness(Number(event.target.value))} /><span>{ringThickness}px</span></label></div>
         </div>
         <div className="settings-panel mt-3">
-          <div className="settings-info-row"><div className="settings-info-icon"><Camera size={15} /><span><strong>Floating camera bubble</strong><small>Open the camera bubble without recording</small></span></div><button className="button secondary" onClick={() => void toggleCameraBubble()}>Open / Close</button></div>
+          <div className="settings-info-row"><div className="settings-info-icon"><Icon lucide={Camera} size={15} /><span><strong>Floating camera bubble</strong><small>Open the camera bubble without recording</small></span></div><button className="button secondary" onClick={() => void toggleCameraBubble()}>Open / Close</button></div>
         </div>
         <div className="settings-panel mt-3">
-          <div className="settings-row settings-save-row"><div className="settings-row-icon"><Folder size={16} /></div><div className="settings-row-copy"><strong>Save location</strong><span title={savePath}>{savePath}</span></div><div className="settings-row-actions"><button className="button secondary" onClick={onChooseSaveDirectory}>Change folder</button>{saveDirectory && <button className="settings-reset" onClick={onResetSaveDirectory} title="Use the default folder" aria-label="Use the default save folder"><RotateCcw size={15} /></button>}</div></div>
+          <div className="settings-row settings-save-row"><div className="settings-row-icon"><Icon lucide={Folder} size={16} /></div><div className="settings-row-copy"><strong>Save location</strong><span title={savePath}>{savePath}</span></div><div className="settings-row-actions"><button className="button secondary" onClick={onChooseSaveDirectory}>Change folder</button>{saveDirectory && <button className="settings-reset" onClick={onResetSaveDirectory} title="Use the default folder" aria-label="Use the default save folder"><Icon lucide={RotateCcw} size={15} /></button>}</div></div>
           <div className="settings-divider" /><div className="settings-default-note">New recordings and exports use this folder. The default is <strong>Documents/Recodex</strong>.</div>
         </div>
       </section>

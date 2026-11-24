@@ -32,3 +32,8 @@
 
 - Files: PascalCase for components, camelCase for modules/utilities.
 - Types: PascalCase; events prefixed `recodex:`.
+
+## Implementation Constraints
+
+- Do not add or use any third-party API without explicit user approval.
+- Do not add or use another programming language for implementation without explicit user approval.
